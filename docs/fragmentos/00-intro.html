@@ -1,0 +1,457 @@
+<section class="module" id="mod-visao-geral">
+<h2>Visão geral do SGDK <span class="subtitle">o kit de desenvolvimento para Sega Mega Drive</span></h2>
+<p class="mod-desc">O SGDK (Sega Genesis Development Kit), na versão 2.11, é um kit de desenvolvimento gratuito criado por Stéphane Dallongeville que permite programar em linguagem C para o Sega Mega Drive / Genesis, gerando imagens de ROM prontas para rodar em hardware real ou emuladores.</p>
+
+<h3>O que é o SGDK</h3>
+<p>O <strong>SGDK 2.11</strong> é composto por três grandes blocos:</p>
+<ul>
+<li><strong>Biblioteca C</strong> — a biblioteca de desenvolvimento em si (com todo o código-fonte incluso), cobrindo vídeo (VDP), sprites, som, DMA, matemática de ponto fixo, controles (joypads), memória e muito mais;</li>
+<li><strong>Toolchain GCC</strong> — o SGDK usa o compilador <code>GCC</code> com alvo <code>m68k-elf</code> e a <code>libgcc</code> para gerar a imagem de ROM. Binários prontos (GCC 13.2) acompanham a distribuição para Windows;</li>
+<li><strong>Ferramentas em Java</strong> — utilitários próprios para compilar recursos (assets), sendo o principal deles o <code>rescomp</code> (compilador de recursos). Por isso o Java precisa estar instalado no sistema.</li>
+</ul>
+<p>A biblioteca e as ferramentas do SGDK são distribuídas sob a licença <strong>MIT</strong>. O compilador GCC e a <code>libgcc</code> permanecem sob licença GNU (GPL3), e qualquer software construído com eles (como a própria biblioteca SGDK) fica sob a <em>GCC runtime library exception</em>.</p>
+<p class="note">Autor e mantenedor: <strong>Stéphane Dallongeville</strong> — repositório oficial em <code>https://github.com/Stephane-D/SGDK</code>, com suporte via Patreon e servidor Discord da comunidade.</p>
+
+<h3>Arquitetura do Mega Drive em resumo</h3>
+<p>Para usar bem o SGDK é essencial conhecer, ao menos superficialmente, o hardware alvo:</p>
+<table class="def-table">
+<tr><th>Componente</th><th>Descrição</th></tr>
+<tr><td><strong>CPU principal — Motorola 68000</strong></td><td>Processador de 16/32 bits rodando a aproximadamente <strong>7,67 MHz</strong> (NTSC). É onde roda o seu código C compilado pelo GCC <code>m68k-elf</code>.</td></tr>
+<tr><td><strong>CPU secundária — Zilog Z80</strong></td><td>Processador de 8 bits (~3,58 MHz) dedicado principalmente ao <strong>som</strong>: os drivers de áudio do SGDK (XGM, XGM2, PCM etc.) rodam nele, liberando o 68000 para a lógica do jogo.</td></tr>
+<tr><td><strong>VDP (Video Display Processor)</strong></td><td>Chip de vídeo com dois planos de fundo roláveis (<strong>Plano A</strong> e <strong>Plano B</strong>) mais um plano <strong>Window</strong> fixo; até <strong>80 sprites</strong> de hardware em tela; <strong>64 KB de VRAM</strong> para tiles, tilemaps e tabelas de sprites; e <strong>CRAM</strong> com <strong>64 cores</strong> simultâneas organizadas em 4 subpaletas de 16 cores.</td></tr>
+<tr><td><strong>Som — YM2612 + PSG</strong></td><td>Sintetizador FM <strong>Yamaha YM2612</strong> com 6 canais (um deles utilizável como DAC para samples PCM) e o <strong>PSG</strong> (SN76489) com 3 canais de onda quadrada + 1 de ruído, herdado do Master System.</td></tr>
+</table>
+<p>Toda a parte gráfica do Mega Drive é baseada em <strong>tiles de 8x8 pixels</strong>: imagens de fundo são tilemaps que referenciam tiles na VRAM, e sprites são compostos por blocos de tiles. Essa lógica permeia o SGDK inteiro — em especial os recursos gerados pelo <code>rescomp</code> (TILESET, TILEMAP, MAP, IMAGE, SPRITE).</p>
+
+<h3>Como a biblioteca se organiza</h3>
+<p>Na prática, você não precisa conhecer a estrutura interna dos headers: o SGDK fornece um <strong>header guarda-chuva</strong> chamado <code>genesis.h</code> que inclui todos os módulos da biblioteca (sys, memory, vdp, vdp_bg, vdp_spr, vdp_tile, pal, dma, map, bmp, sprite_eng, sound, joy, maths, string, timer, tools etc.). Basta uma única linha em cada arquivo-fonte:</p>
+<pre class="code">#include &lt;genesis.h&gt;</pre>
+<p>A partir daí todas as funções da API (com prefixos como <code>VDP_</code>, <code>SYS_</code>, <code>SPR_</code>, <code>PAL_</code>, <code>XGM_</code>, <code>JOY_</code>...) ficam disponíveis. A documentação de referência completa (Doxygen, gerada a partir dos headers) está publicada em <code>http://stephane-d.github.io/SGDK/</code>.</p>
+<p class="note">O SGDK exige familiaridade prévia com a linguagem C. Aprender C ao mesmo tempo em que se aprende a programar o Mega Drive é fortemente desaconselhado pelo próprio autor — o resultado costuma ser frustração dobrada.</p>
+</section>
+
+<section class="module" id="mod-instalacao">
+<h2>Instalação e primeiro build <span class="subtitle">Windows, Linux/macOS, variável GDK e emuladores</span></h2>
+<p class="mod-desc">Como instalar o SGDK no Windows (onde os binários já vêm prontos) e nas demais plataformas, configurar a variável de ambiente GDK, compilar um projeto com o makefile oficial e testar a ROM resultante em um emulador.</p>
+
+<h3>Windows (caminho recomendado)</h3>
+<p>No Windows a instalação é a mais simples, pois o pacote do SGDK já inclui os <strong>binários pré-compilados do GCC 13.2</strong> (alvo <code>m68k-elf</code>) e as ferramentas auxiliares. Os passos essenciais são:</p>
+<ol>
+<li>Baixar a release do SGDK no GitHub e extrair em uma pasta sem espaços no caminho (por exemplo <code>C:\sgdk</code>);</li>
+<li>Instalar o <strong>Java</strong> (JRE/JDK), necessário para as ferramentas de recursos como o <code>rescomp</code>;</li>
+<li>Definir a variável de ambiente <code>GDK</code> apontando para a pasta de instalação e, opcionalmente, adicionar <code>%GDK%\bin</code> ao <code>PATH</code>.</li>
+</ol>
+
+<h3>Linux, macOS e outras plataformas</h3>
+<p>Fora do Windows os binários do GCC não acompanham o pacote — você precisa providenciar o toolchain <code>m68k-elf</code> por conta própria. As opções mais usadas:</p>
+<ul>
+<li><strong>Compilar o GCC m68k-elf</strong> manualmente (ou instalá-lo via gerenciador de pacotes, quando disponível);</li>
+<li><strong>Docker</strong> — a solução recomendada é a imagem de Doragasu (<code>https://gitlab.com/doragasu/docker-sgdk</code>), que usa compilador Linux nativo (rápida e simples);</li>
+<li><strong>Wrappers/ambientes prontos</strong> — o <strong>MarsDev</strong> de Andy Grind (<code>https://github.com/andwn/marsdev</code>) funciona em todos os sistemas, é compatível com o SGDK e ainda suporta 32X; há também o <em>SGDK_wine</em> (rodar o kit via Wine), o <em>sgdk-helper</em> de tlsa (ambiente nativo ou em contêiner) e o <em>gendev-macos</em> para macOS;</li>
+<li><strong>VS Code</strong> — a extensão <em>Genesis-Code</em> (zerasul) integra build e execução; o SGDK inclui um template de projeto para VS Code em <code>project/template</code>.</li>
+</ul>
+
+<h3>A variável GDK e a compilação</h3>
+<p>Todo o sistema de build gira em torno da variável de ambiente <code>GDK</code>, que aponta para a raiz da instalação do SGDK. Com ela definida, compilar um projeto é executar, na pasta do projeto:</p>
+<pre class="code"># Windows (usando o make incluso em %GDK%\bin)
+%GDK%\bin\make -f %GDK%\makefile.gen
+
+# Linux / macOS (toolchain nativo)
+make -f $GDK/makefile.gen</pre>
+<p>O makefile oficial (<code>makefile.gen</code>) cuida de tudo: compila os fontes C/assembly de <code>src/</code>, invoca o <code>rescomp</code> para os arquivos <code>.res</code> de <code>res/</code>, faz o link e gera a ROM final em:</p>
+<pre class="code">out/rom.bin</pre>
+<p>Esse arquivo <code>rom.bin</code> é a imagem de ROM pronta para ser carregada em um emulador ou gravada em um flashcart (Everdrive, Mega Everdrive etc.) para rodar no console real.</p>
+
+<h3>Emuladores recomendados e documentação</h3>
+<ul>
+<li><strong>BlastEm</strong> — o emulador mais preciso disponível, ideal para validar o comportamento próximo do hardware real (inclui debugger);</li>
+<li><strong>Gens KMod</strong> — versão modificada do Gens com ferramentas de depuração voltadas ao desenvolvimento (visualização de VRAM, planos, sprites, mensagens de debug do SGDK).</li>
+</ul>
+<p class="note">Sempre teste em mais de um emulador — e, se possível, em hardware real — antes de publicar: emuladores menos precisos podem mascarar bugs de timing e de acesso ao VDP.</p>
+<p>A referência oficial de instalação e os tutoriais de primeiros passos estão no <strong>wiki oficial</strong>: <code>https://github.com/Stephane-D/SGDK/wiki</code>. A documentação de API (Doxygen) fica em <code>http://stephane-d.github.io/SGDK/</code>, e a comunidade se concentra no Discord do SGDK e no fórum Spritesmind.</p>
+</section>
+<section class="module" id="mod-estrutura-projeto">
+<h2>Estrutura de um projeto SGDK <span class="subtitle">pastas, ciclo de build e o "Hello world"</span></h2>
+<p class="mod-desc">Todo projeto SGDK segue uma convenção simples de diretórios que o makefile oficial reconhece automaticamente: fontes em src/, recursos em res/, headers em inc/ e a ROM final em out/.</p>
+
+<h3>Layout de diretórios</h3>
+<table class="def-table">
+<tr><th>Pasta</th><th>Conteúdo</th></tr>
+<tr><td><code>src/</code></td><td>Código-fonte C (<code>.c</code>) e assembly (<code>.s</code>) do jogo. O ponto de entrada é a função <code>main()</code>. Um <code>rom_header.c</code> opcional permite personalizar o cabeçalho da ROM (nome do jogo, região, suporte a SRAM etc.).</td></tr>
+<tr><td><code>res/</code></td><td>Recursos (assets): imagens PNG/BMP, músicas VGM/XGM, sons WAV, mapas TMX... acompanhados dos arquivos de declaração <code>.res</code> que o <code>rescomp</code> compila.</td></tr>
+<tr><td><code>inc/</code></td><td>Headers (<code>.h</code>) do próprio projeto. Os headers gerados pelo <code>rescomp</code> a partir dos <code>.res</code> também ficam acessíveis para inclusão.</td></tr>
+<tr><td><code>out/</code></td><td>Saída do build: objetos intermediários, listagens, símbolos e a ROM final <code>out/rom.bin</code>.</td></tr>
+</table>
+
+<h3>Ciclo de build</h3>
+<ol>
+<li>O <code>rescomp</code> converte cada arquivo <code>.res</code> de <code>res/</code> em um fonte assembly (<code>.s</code>) contendo os dados binários dos recursos, e gera um header <code>.h</code> com as declarações <code>extern</code> correspondentes;</li>
+<li>O GCC <code>m68k-elf</code> compila os fontes de <code>src/</code> e os assemblies gerados;</li>
+<li>O linker junta tudo com a biblioteca do SGDK e a <code>libgcc</code>;</li>
+<li>A imagem final é convertida em <code>out/rom.bin</code>, pronta para o emulador ou hardware real.</li>
+</ol>
+<pre class="code">res/*.res ──rescomp──&gt; out/res/*.s + *.h ─┐
+src/*.c  ───gcc (m68k-elf)──&gt; *.o ────────┼──link──&gt; out/rom.out ──objcopy──&gt; out/rom.bin
+libmd.a (SGDK) + libgcc ──────────────────┘</pre>
+
+<h3>Exemplo mínimo real: Hello world</h3>
+<p>Este é o conteúdo real de <code>sample/basics/hello-world/src/main.c</code> distribuído com o SGDK:</p>
+<pre class="code">#include &lt;genesis.h&gt;
+
+
+int main(bool hardReset)
+{
+    VDP_drawText("Hello world !", 12, 12);
+
+    while(TRUE)
+    {
+        // nothing to do here
+        // ...
+
+        // always call this method at the end of the frame
+        SYS_doVBlankProcess();
+    }
+
+    return 0;
+}</pre>
+<p>Três pontos merecem destaque:</p>
+<ul>
+<li><code>#include &lt;genesis.h&gt;</code> — único include necessário: traz toda a API do SGDK;</li>
+<li><code>VDP_drawText("Hello world !", 12, 12)</code> — desenha texto no plano de fundo usando a fonte padrão da biblioteca, na coluna 12 e linha 12 (coordenadas em tiles de 8x8 pixels);</li>
+<li><code>SYS_doVBlankProcess()</code> — deve ser chamada <strong>ao final de cada frame</strong>, dentro do loop principal. Ela sincroniza o jogo com o VBlank (retraço vertical), processa as transferências DMA pendentes, atualiza a leitura dos joypads e executa as tarefas internas da biblioteca. É o "coração" do loop de jogo no SGDK.</li>
+</ul>
+<p class="note">Repare que <code>main()</code> recebe um parâmetro <code>bool hardReset</code>: o SGDK informa se a inicialização veio de um reset "frio" (ligar o console) ou "quente" (botão RESET), permitindo tratar os dois casos de forma diferente se necessário.</p>
+</section>
+<section class="module" id="mod-rescomp">
+<h2>Sistema de recursos: rescomp <span class="subtitle">compilando assets em dados prontos para a ROM</span></h2>
+<p class="mod-desc">O rescomp é o compilador de recursos do SGDK (ferramenta Java): ele lê arquivos de declaração .res, converte imagens, músicas e dados binários para os formatos internos da biblioteca e gera um fonte assembly (formato GAS) mais um header .h com as declarações para uso no código C.</p>
+
+<h3>O que é o rescomp e como funciona</h3>
+<p>O SGDK depende fortemente de <em>recursos</em> compilados: em vez de converter imagens e sons manualmente, você escreve um arquivo texto <code>.res</code> em que cada linha declara um recurso (tipo, nome, arquivo de origem e opções). Uso na linha de comando (o makefile oficial já faz isso por você):</p>
+<pre class="code">rescomp input [output] [-noheader] [-dep &lt;target_file&gt;]
+
+    input      arquivo de recursos de entrada (.res)
+    output     nome do arquivo assembly de saída (se omitido, usa o nome do input com extensão .s)
+    -noheader  não gerar o arquivo header (.h)
+    -dep       gerar arquivo de dependências (.d) para o make (experimental)</pre>
+<p>Exemplo de arquivo <code>.res</code> real (do sample <code>basics/image</code>):</p>
+<pre class="code">IMAGE logo_aplib "sgdk.png" APLIB
+IMAGE logo_ucomp "sgdk.png" NONE</pre>
+<p>Para cada <code>.res</code> o rescomp gera um header homônimo (ex.: <code>gfx.res</code> → <code>gfx.h</code>) com declarações <code>extern</code> dos recursos. No código basta incluir o header e usar as variáveis:</p>
+<pre class="code">// gfx.h (gerado automaticamente pelo rescomp)
+extern const Image logo_aplib;
+extern const Image logo_ucomp;
+
+// main.c
+#include &lt;genesis.h&gt;
+#include "gfx.h"
+
+VDP_drawImage(BG_A, &amp;logo_ucomp, 0, 0);</pre>
+
+<h3>Tipos de recurso suportados</h3>
+<table class="def-table">
+<tr><th>Tipo</th><th>Uso</th></tr>
+<tr><td><code>PALETTE</code></td><td>Paleta de cores (entrada para Bitmap, Image e Sprite)</td></tr>
+<tr><td><code>BITMAP</code></td><td>Imagem bitmap para o engine BMP do SGDK (não usar como recurso de tiles)</td></tr>
+<tr><td><code>TILESET</code></td><td>Conjunto de tiles compartilhável entre TILEMAP e MAP</td></tr>
+<tr><td><code>TILEMAP</code></td><td>Tilemap "cru" para desenhar imagens/fundos pequenos</td></tr>
+<tr><td><code>MAP</code></td><td>Mapa otimizado para fundos/fases grandes</td></tr>
+<tr><td><code>OBJECTS</code></td><td>Array de objetos customizados de mapas Tiled (TMX)</td></tr>
+<tr><td><code>IMAGE</code></td><td>Imagem completa (Palette + TileSet + TileMap) para planos de fundo</td></tr>
+<tr><td><code>SPRITE</code></td><td>Definição de sprite para o Sprite engine do SGDK</td></tr>
+<tr><td><code>XGM</code> / <code>XGM2</code></td><td>Música (VGM/XGM) para os drivers XGM e XGM2</td></tr>
+<tr><td><code>WAV</code></td><td>Sample de som PCM para os drivers de áudio</td></tr>
+<tr><td><code>BIN</code></td><td>Dados binários arbitrários, sem conversão específica</td></tr>
+<tr><td><code>ALIGN</code> / <code>UNGROUP</code> / <code>NEAR</code></td><td>Funções auxiliares que controlam alinhamento, agrupamento e posicionamento (FAR/NEAR) dos dados no arquivo</td></tr>
+</table>
+
+<h3>Nota importante sobre formatos de imagem</h3>
+<p>Vários tipos de recurso usam imagens (BMP ou PNG) como entrada, e o rescomp aceita imagens <strong>RGB</strong> e imagens de <strong>cor indexada</strong>:</p>
+<ul>
+<li><strong>Imagens RGB</strong> — como não há informação de paleta, ela deve estar desenhada no canto superior esquerdo da imagem: cada cor em um tile de 8x8 e cada subpaleta (16 cores) em uma linha de tiles separada. É preciso incluir as 4 subpaletas (4x16 cores) mesmo que só a primeira seja usada. O rescomp remove automaticamente essa área da imagem durante o processamento (veja <code>rgb_example.png</code> em <code>sample/game/sonic/res/gfx</code>);</li>
+<li><strong>Imagens indexadas</strong> — suporte a 8bpp, 4bpp, 2bpp e 1bpp; a paleta é lida diretamente da imagem (a cor de índice 0 é a cor transparente). Com imagens 8bpp, os índices de cor ≥ 128 podem carregar informação extra por tile: <strong>bits 4-5</strong> = índice da paleta (0-3), <strong>bit 7</strong> = prioridade (0=LOW, 1=HIGH); o bit 6 é ignorado. Todos os pixels de um mesmo tile 8x8 devem usar o mesmo valor extra, senão o rescomp gera erro.</li>
+</ul>
+<p class="note">O rescomp também suporta <strong>extensões</strong>: é possível criar tipos de recurso próprios em Java, exportar como <code>[nome]_ext.jar</code> e colocar o jar na mesma pasta dos arquivos <code>.res</code> — ele é detectado automaticamente.</p>
+
+<article class="fn" id="res-PALETTE">
+<h4><code>PALETTE</code></h4>
+<p>Converte um arquivo <code>.pal</code> (Paint Shop Pro) ou uma imagem em uma estrutura <code>Palette</code> do SGDK. Usada como fonte de cores para recursos Bitmap, Image e Sprite.</p>
+<pre class="code">PALETTE name file</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da estrutura de saída</td></tr>
+<tr><td><code>file</code></td><td>Caminho da imagem de entrada (BMP ou PNG) ou arquivo PAL (paleta Paint Shop Pro). Vale a nota sobre formatos de imagem acima.</td></tr>
+</table>
+<p>Exemplo real (sample Sonic):</p>
+<pre class="code">PALETTE palette_all "gfx/S1_GHZ1_FG.png"</pre>
+<p>Header gerado: <code>extern const Palette palette_all;</code> — carregue com <code>PAL_setPalette(PAL0, palette_all.data, DMA);</code></p>
+</article>
+
+<article class="fn" id="res-BITMAP">
+<h4><code>BITMAP</code></h4>
+<p>Converte uma imagem em uma estrutura <code>Bitmap</code> do SGDK, destinada ao engine BMP (framebuffer por software). <strong>Não</strong> deve ser usada para imagens baseadas em tiles.</p>
+<pre class="code">BITMAP name img_file [compression]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da estrutura Bitmap de saída</td></tr>
+<tr><td><code>img_file</code></td><td>Caminho da imagem de entrada (BMP ou PNG)</td></tr>
+<tr><td><code>compression</code></td><td>Compressão (descompacte com <code>unpackBitmap(..)</code>): <code>-1/BEST/AUTO</code> = melhor compressão; <code>0/NONE</code> = sem compressão (padrão); <code>1/APLIB</code> = aplib (ótima taxa, lenta); <code>2/FAST/LZ4W</code> = LZ4 customizado (taxa média, rápido)</td></tr>
+</table>
+<p>Exemplo:</p>
+<pre class="code">BITMAP logo_bmp "gfx/logo.png" BEST</pre>
+<p>Header gerado: <code>extern const Bitmap logo_bmp;</code></p>
+</article>
+
+<article class="fn" id="res-TILESET">
+<h4><code>TILESET</code></h4>
+<p>Converte uma imagem ou arquivo TSX (Tiled) em uma estrutura <code>TileSet</code>, usada como fonte de tiles para recursos Image, Tilemap, Map e Sprite. Se a entrada já for um tileset "de verdade" (como uma fonte de caracteres), use <code>opt = NONE</code> para não remover tiles duplicados.</p>
+<pre class="code">TILESET name file [compression [opt [ordering [export]]]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da estrutura TileSet de saída</td></tr>
+<tr><td><code>file</code></td><td>Caminho do arquivo de entrada (BMP, PNG ou TSX do Tiled)</td></tr>
+<tr><td><code>compression</code></td><td>Compressão (descompacte com <code>unpackTileSet(..)</code>): <code>-1/BEST/AUTO</code>, <code>0/NONE</code> (padrão), <code>1/APLIB</code>, <code>2/FAST/LZ4W</code></td></tr>
+<tr><td><code>opt</code></td><td>Nível de otimização: <code>0/NONE</code> = nenhuma (cada tile é único); <code>1/ALL</code> = ignora tiles duplicados e espelhados (padrão); <code>2/DUPLICATE</code> = ignora apenas duplicados</td></tr>
+<tr><td><code>ordering</code></td><td>Ordem de processamento dos tiles: <code>ROW</code> = por linha (padrão); <code>COLUMN</code> = por coluna</td></tr>
+<tr><td><code>export</code></td><td>Exportação do tileset otimizado em PNG: <code>0/FALSE</code> = não exporta (padrão); <code>1/TRUE</code> = exporta como <code>&lt;file&gt;-tileset-export.png</code></td></tr>
+</table>
+<p>Exemplo real (sample Sonic):</p>
+<pre class="code">TILESET bga_tileset "gfx/S1_GHZ1_FG.png" BEST ALL</pre>
+<p>Header gerado: <code>extern const TileSet bga_tileset;</code></p>
+<p class="note">Com imagem 8bpp indexada é possível embutir, nos bits extras da cor, o índice de paleta (bits 4-5) e a prioridade (bit 7) por tile — desde que todos os pixels do tile 8x8 usem o mesmo valor.</p>
+</article>
+<article class="fn" id="res-TILEMAP">
+<h4><code>TILEMAP</code></h4>
+<p>Converte uma imagem ou um arquivo TMX (Tiled) em uma estrutura <code>TileMap</code>, usada para desenhar em um plano de fundo. Requer um tileset, que pode ser compartilhado entre vários tilemaps. <strong>Não</strong> é indicado para fases grandes (ocupa muito espaço) — para isso use o recurso <code>MAP</code>.</p>
+<p>Sintaxe com imagem como entrada:</p>
+<pre class="code">TILEMAP name img_file tileset_id [compression [map_opt [map_base [ordering]]]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da estrutura TileMap de saída</td></tr>
+<tr><td><code>img_file</code></td><td>Caminho da imagem de entrada (BMP ou PNG)</td></tr>
+<tr><td><code>tileset_id</code></td><td>Recurso TILESET base a usar (permite compartilhar o tileset entre vários tilemaps)</td></tr>
+<tr><td><code>compression</code></td><td>Compressão (descompacte com <code>unpackTileMap(..)</code>): <code>-1/BEST/AUTO</code>, <code>0/NONE</code> (padrão), <code>1/APLIB</code>, <code>2/FAST/LZ4W</code></td></tr>
+<tr><td><code>map_opt</code></td><td>Otimização do tilemap: <code>0/NONE</code> = nenhuma; <code>1/ALL</code> = detecta tiles duplicados e espelhados (padrão); <code>2/DUPLICATE</code> = apenas duplicados</td></tr>
+<tr><td><code>map_base</code></td><td>Valor base do tilemap: define prioridade, paleta e deslocamento de índice de tile padrão. Usar um offset de índice fixo (alocação estática de tiles) permite empregar as funções mais rápidas <code>VDP_setTileMapxxx(..)</code></td></tr>
+<tr><td><code>ordering</code></td><td>Ordem de processamento: <code>ROW</code> (padrão) ou <code>COLUMN</code></td></tr>
+</table>
+<p>Sintaxe com arquivo TMX (Tiled, dados de mapa em CSV) como entrada:</p>
+<pre class="code">TILEMAP name tmx_file layer_id [ts_compression [map_compression [map_base]]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da estrutura TileMap de saída</td></tr>
+<tr><td><code>tmx_file</code></td><td>Caminho do arquivo TMX (com dados de mapa codificados em CSV)</td></tr>
+<tr><td><code>layer_id</code></td><td>Nome da camada (layer) da qual extrair os dados do mapa</td></tr>
+<tr><td><code>ts_compression</code></td><td>Compressão do tileset: <code>-1/BEST/AUTO</code>, <code>0/NONE</code> (padrão), <code>1/APLIB</code>, <code>2/FAST/LZ4W</code></td></tr>
+<tr><td><code>map_compression</code></td><td>Compressão do mapa (mesmos valores de <code>ts_compression</code>)</td></tr>
+<tr><td><code>map_base</code></td><td>Valor base do tilemap (prioridade, paleta e offset de índice de tile padrão)</td></tr>
+</table>
+<p>Exemplo:</p>
+<pre class="code">TILESET fundo_ts  "gfx/fundo.png" FAST
+TILEMAP fundo_tm  "gfx/fundo.png" fundo_ts FAST ALL 0</pre>
+<p>Header gerado: <code>extern const TileMap fundo_tm;</code></p>
+<p class="note">Com TMX é possível definir a prioridade de duas formas: (1) duas camadas com sufixos <code>' low'</code> e <code>' high'</code> no nome; ou (2) uma camada principal mais uma camada com sufixo <code>' priority'</code>/<code>' prio'</code> contendo a informação 0/1 — nesse caso um tile 8x8 totalmente transparente vale prioridade LOW e um tile com ao menos 1 pixel opaco vale HIGH.</p>
+</article>
+
+<article class="fn" id="res-MAP">
+<h4><code>MAP</code></h4>
+<p>Converte uma imagem ou arquivo TMX em uma estrutura <code>Map</code>, otimizada para fundos/fases <strong>grandes</strong>: usa uma codificação avançada (blocos comprimidos) que ocupa muito menos ROM que um recurso IMAGE equivalente. É o recurso indicado para níveis de jogo com scroll.</p>
+<p>Sintaxe com imagem:</p>
+<pre class="code">MAP name img_file tileset_id [compression [map_base]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da estrutura Map de saída</td></tr>
+<tr><td><code>img_file</code></td><td>Caminho da imagem de entrada (BMP ou PNG)</td></tr>
+<tr><td><code>tileset_id</code></td><td>Recurso TILESET base (compartilhável entre vários mapas)</td></tr>
+<tr><td><code>compression</code></td><td>Compressão: <code>-1/BEST/AUTO</code>, <code>0/NONE</code> (padrão), <code>1/APLIB</code>, <code>2/FAST/LZ4W</code></td></tr>
+<tr><td><code>map_base</code></td><td>Valor base do tilemap (prioridade, paleta e offset de índice de tile padrão); com alocação estática de tiles a decodificação interna do MAP fica mais rápida</td></tr>
+</table>
+<p>Sintaxe com TMX:</p>
+<pre class="code">MAP name tmx_file layer_id [ts_compression [map_compression [map_base [ordering]]]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da estrutura Map de saída</td></tr>
+<tr><td><code>tmx_file</code></td><td>Caminho do arquivo TMX (dados de mapa em CSV)</td></tr>
+<tr><td><code>layer_id</code></td><td>Nome da camada da qual extrair os dados</td></tr>
+<tr><td><code>ts_compression</code></td><td>Compressão do tileset: <code>-1/BEST/AUTO</code>, <code>0/NONE</code> (padrão), <code>1/APLIB</code>, <code>2/FAST/LZ4W</code></td></tr>
+<tr><td><code>map_compression</code></td><td>Compressão do mapa (mesmos valores)</td></tr>
+<tr><td><code>map_base</code></td><td>Valor base do tilemap (prioridade, paleta, offset de índice)</td></tr>
+<tr><td><code>ordering</code></td><td>Ordem de processamento: <code>ROW</code> (padrão) ou <code>COLUMN</code></td></tr>
+</table>
+<p>Exemplo real (sample Sonic — dois planos com tilesets próprios):</p>
+<pre class="code">TILESET bga_tileset "gfx/S1_GHZ1_FG.png" BEST ALL
+TILESET bgb_tileset "gfx/S1_GHZ1_BG.png" BEST ALL
+
+MAP bga_map "gfx/S1_GHZ1_FG.png" bga_tileset BEST 0
+MAP bgb_map "gfx/S1_GHZ1_BG.png" bgb_tileset BEST 0</pre>
+<p>Header gerado: <code>extern const MapDefinition bga_map;</code> — use com <code>MAP_create(&amp;bga_map, BG_A, ...)</code> e <code>MAP_scrollTo(..)</code>.</p>
+<p class="note">Valem as mesmas dicas do TILEMAP: bits extras em imagens 8bpp (paleta nos bits 4-5, prioridade no bit 7) e camadas TMX com sufixos <code>' low'</code>/<code>' high'</code> ou camada <code>' priority'</code> para definir prioridade.</p>
+</article>
+
+<article class="fn" id="res-OBJECTS">
+<h4><code>OBJECTS</code></h4>
+<p>Converte um arquivo TMX (Tiled) em um <strong>array de ponteiros para objetos</strong> customizados — útil para definir entidades, eventos, gatilhos e qualquer coisa que você queira "anexar" a um MAP. Os objetos vêm das <em>object layers</em> do Tiled; desde o Tiled 1.8 é possível definir tipos de objeto próprios. Objetos baseados em arquivos de template (<code>.tx</code>) não são suportados (são ignorados).</p>
+<pre class="code">OBJECTS name tmx_file layer_id field_defs [sortby:&lt;field&gt;] [decl_type [type_filter]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome do array de objetos de saída</td></tr>
+<tr><td><code>tmx_file</code></td><td>Caminho do arquivo TMX</td></tr>
+<tr><td><code>layer_id</code></td><td>Nome do grupo/camada de objetos a exportar</td></tr>
+<tr><td><code>field_defs</code></td><td>Campos a exportar (e a ordem de extração) no formato <code>&lt;nome&gt;:&lt;tipo&gt;</code> separados por <code>;</code>. Tipos aceitos: <code>u8, s8, u16, s16, u32, s32, f16, f32, bool, string, object</code>. Ex.: <code>"type:u16;name:string;x:f32;y:f32;tileindex:u32"</code>. Campos não encontrados são simplesmente ignorados.</td></tr>
+<tr><td><code>sortby</code></td><td>Campo usado para ordenar os objetos, ex.: <code>sortby:x</code>. Sem ele, a ordenação usa (nesta ordem) os campos <code>index</code>, <code>ind</code>, <code>tileIndex</code>, <code>id</code>.</td></tr>
+<tr><td><code>decl_type</code></td><td>Tipo de declaração dos objetos (padrão <code>void</code>); pode ser um tipo próprio como <code>"Entity"</code></td></tr>
+<tr><td><code>type_filter</code></td><td>Filtro por tipo: extrai apenas objetos Tiled do tipo indicado</td></tr>
+</table>
+<p>Correspondência de tipos Tiled → SGDK: <code>bool</code>→<code>bool</code>; <code>color</code>→<code>u32</code>; <code>float</code>→<code>f32,f16,s32,u32,s16,u16</code>; <code>int</code>→<code>f32,f16,s32,u32,s16,u16,s8,u8</code>; <code>Object</code>→<code>object</code> (internamente <code>void*</code>); <code>string</code>→<code>string</code> (internamente <code>char*</code>); <code>Enum</code>→<code>u8,u16,u32</code> (salve como número, não string); <code>file</code> e <code>list</code> não são suportados.</p>
+<p>Exemplo:</p>
+<pre class="code">OBJECTS level1_entities "maps/level1.tmx" "entities" "type:u16;x:f32;y:f32" sortby:x Entity</pre>
+<p class="note">Atributos padrão do Tiled (<code>id</code>, <code>name</code>, <code>visible</code>, <code>x</code>/<code>y</code>, <code>width</code>/<code>height</code>, <code>text</code>) só são exportados se você adicionar no objeto um campo booleano habilitador com valor <code>true</code>: <code>exportId</code>, <code>exportName</code>, <code>exportVisible</code>, <code>exportPosition</code>, <code>exportSize</code>, <code>exportText</code>. Há ainda <code>exportTileIndex</code>, que exporta o índice do tile (<code>x + y * map_width</code>) no campo <code>tileIndex</code> e ordena os objetos por ele, viabilizando buscas rápidas por posição.</p>
+</article>
+<article class="fn" id="res-IMAGE">
+<h4><code>IMAGE</code></h4>
+<p>Converte uma imagem em uma estrutura <code>Image</code> do SGDK, que embute internamente <code>Palette</code>, <code>TileSet</code> e <code>TileMap</code>. É a forma mais direta de desenhar uma imagem completa em um plano de fundo. Para fases grandes, prefira <code>MAP</code> (IMAGE consome muito espaço em ROM).</p>
+<pre class="code">IMAGE name img_file [compression [map_opt [map_base]]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da estrutura Image de saída</td></tr>
+<tr><td><code>img_file</code></td><td>Caminho da imagem de entrada (BMP ou PNG)</td></tr>
+<tr><td><code>compression</code></td><td>Compressão (descompacte com <code>unpackImage(..)</code>): <code>-1/BEST/AUTO</code>, <code>0/NONE</code> (padrão), <code>1/APLIB</code>, <code>2/FAST/LZ4W</code></td></tr>
+<tr><td><code>map_opt</code></td><td>Otimização do tilemap: <code>0/NONE</code>, <code>1/ALL</code> (padrão, detecta duplicados e espelhados), <code>2/DUPLICATE</code></td></tr>
+<tr><td><code>map_base</code></td><td>Valor base do tilemap (prioridade, paleta e offset de índice de tile). Com offset estático é possível usar as funções mais rápidas <code>VDP_xxxTileMapxxx(..)</code></td></tr>
+</table>
+<p>Exemplo real (sample <code>basics/image</code> — a mesma imagem com e sem compressão):</p>
+<pre class="code">IMAGE logo_aplib "sgdk.png" APLIB
+IMAGE logo_ucomp "sgdk.png" NONE</pre>
+<p>Header gerado: <code>extern const Image logo_aplib;</code> — desenhe com <code>VDP_drawImage(BG_A, &amp;logo_ucomp, x, y);</code></p>
+</article>
+
+<article class="fn" id="res-SPRITE">
+<h4><code>SPRITE</code></h4>
+<p>Converte uma folha de sprites (spritesheet) em uma estrutura <code>SpriteDefinition</code> para o Sprite engine do SGDK. Internamente contém várias estruturas <code>TileSet</code>, <code>Palette</code> e <code>Animation</code>. A imagem de entrada é uma grade: cada <strong>célula</strong> é um frame e cada <strong>linha</strong> é uma animação completa.</p>
+<pre class="code">SPRITE name img_file width height [compression [time [collision [opt_type [opt_level [opt_duplicate]]]]]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da estrutura SpriteDefinition de saída</td></tr>
+<tr><td><code>img_file</code></td><td>Caminho da imagem de entrada (BMP ou PNG)</td></tr>
+<tr><td><code>width</code></td><td>Largura de um frame: em tiles (deve ser &lt; 32), em pixels com sufixo <code>p</code> (múltiplo de 8, ex.: <code>32p</code>) ou em número de frames na largura com sufixo <code>f</code> (ex.: <code>4f</code>)</td></tr>
+<tr><td><code>height</code></td><td>Altura de um frame: mesmas convenções de <code>width</code> (ex.: <code>16p</code>, <code>1f</code>)</td></tr>
+<tr><td><code>compression</code></td><td>Compressão: <code>-1/BEST/AUTO</code>, <code>0/NONE</code> (padrão), <code>1/APLIB</code> (boa taxa, lenta — evite em sprites com streaming), <code>2/FAST/LZ4W</code> (recomendada para sprites com streaming)</td></tr>
+<tr><td><code>time</code></td><td>Duração de cada frame em 1/60 s. <code>0</code> (padrão) desativa a animação automática. Pode ser global (um valor) ou por frame/animação, ex. para 3 animações x 5 frames: <code>[[3,3,3,4,4][4,5,5][2,3,3,4]]</code> (sem espaços; valores vazios permitidos para frames vazios)</td></tr>
+<tr><td><code>collision</code></td><td>Tipo de colisão: <code>CIRCLE</code>, <code>BOX</code> ou <code>NONE</code> (padrão). Por padrão os limites de colisão usam 75% do frame original</td></tr>
+<tr><td><code>opt_type</code></td><td>Estratégia de corte em sprites de hardware: <code>0/BALANCED</code> = equilíbrio entre tiles e sprites de hardware (padrão); <code>1/SPRITE</code> = menos sprites de hardware (sprites maiores, mais tiles); <code>2/TILE</code> = menos tiles (mais sprites de hardware menores); <code>3/NONE</code> = sem otimização (cobre o frame inteiro)</td></tr>
+<tr><td><code>opt_level</code></td><td>Nível de otimização do corte: <code>0/FAST</code> = rápido, bom em geral (padrão); <code>1/MEDIUM</code> = melhor que FAST, ~10x mais lento; <code>2/SLOW</code> = algoritmo genético (80.000 iterações), ~25x mais lento; <code>3/MAX</code> = algoritmo genético (500.000 iterações), ~150x mais lento</td></tr>
+<tr><td><code>opt_duplicate</code></td><td>Remoção de frames consecutivos duplicados: <code>FALSE</code> (padrão) = não remove (os dados de pixel duplicados ainda são otimizados pelo otimizador binário); <code>TRUE</code> = mantém só a primeira ocorrência e aumenta o <code>timer</code> para compensar — atenção: isso altera <code>animation.numFrame</code></td></tr>
+</table>
+<p>Como a <code>SpriteDefinition</code> é gerada:</p>
+<ul>
+<li>As dimensões da imagem devem ser múltiplas de 8 (alinhadas em tile); cada célula da grade é um frame e cada linha uma animação (máximo de 255 frames por animação);</li>
+<li>O tamanho do frame (width x height em tiles) deve ficar abaixo de 32 tiles por eixo (máximo de 248 pixels);</li>
+<li>Um frame pode ser composto por vários sprites de hardware do VDP, limitado a <strong>16 sprites de hardware por frame</strong> — se não couber, o rescomp reclama e você deve reduzir ou dividir o sprite;</li>
+<li>O rescomp detecta frames espelhados (evitando tiles redundantes), frames vazios ao final da linha (não armazenados), frames copiados dentro da animação (gera a sequência correspondente) e áreas vazias dentro dos frames (economizando sprites de hardware e VRAM).</li>
+</ul>
+<p>Exemplos reais (sample Sonic):</p>
+<pre class="code">SPRITE sonic_sprite   "sprite/sonic.png"   6 6 FAST 5
+SPRITE enemy01_sprite "sprite/enemy01.png" 6 4 BEST 5
+SPRITE sbar_sprite    "sprite/sbar.png"    1 3 FAST 0</pre>
+<p>Header gerado: <code>extern const SpriteDefinition sonic_sprite;</code> — instancie com <code>SPR_addSprite(&amp;sonic_sprite, x, y, TILE_ATTR(PAL0, ...));</code></p>
+<p class="note">Quando <code>opt_level</code> é informado (valor não vazio), o rescomp salva automaticamente uma imagem <code>&lt;imagem&gt;_opt.png</code> mostrando o resultado do corte em sprites de hardware — ótimo para depurar o consumo de VRAM.</p>
+</article>
+
+<article class="fn" id="res-XGM">
+<h4><code>XGM</code></h4>
+<p>Converte um arquivo de música VGM ou XGM em formato binário utilizável com <code>XGM_startPlay(..)</code>. O driver XGM toca música com mixagem de <strong>4 canais PCM</strong>, rodando 100% na CPU Z80.</p>
+<pre class="code">XGM name file [timing [options]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da variável da música XGM</td></tr>
+<tr><td><code>file</code></td><td>Caminho do arquivo <code>.vgm</code> ou <code>.xgm</code> a converter</td></tr>
+<tr><td><code>timing</code></td><td>Base de tempo do XGM: <code>-1</code> (padrão) = AUTO (NTSC ou PAL conforme o arquivo de origem); <code>0</code> = NTSC; <code>1</code> = PAL</td></tr>
+<tr><td><code>options</code></td><td>Parâmetros opcionais repassados ao <code>xgmtool</code>, ex.: <code>"-dr -di"</code> para desativar processamentos automáticos de samples</td></tr>
+</table>
+<p>Exemplo:</p>
+<pre class="code">XGM musica_fase1 "music/fase1.vgm" -1</pre>
+<p>Header gerado: <code>extern const u8 musica_fase1[];</code></p>
+</article>
+
+<article class="fn" id="res-XGM2">
+<h4><code>XGM2</code></h4>
+<p>Converte um ou mais arquivos VGM para o formato do driver <strong>XGM2</strong>, utilizável com <code>XGM2_play(..)</code> ou <code>XGM2_playTrack(..)</code>. O XGM2 mixa <strong>3 canais PCM</strong> (100% no Z80) com volume ajustável (FM e PSG).</p>
+<p>Sintaxe para faixa única:</p>
+<pre class="code">XGM2 name file [options]</pre>
+<p>Sintaxe multi-faixas (permite compartilhamento de PCM entre as faixas):</p>
+<pre class="code">XGM2 name file1 [file2] [...] [options]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da variável da música XGM2</td></tr>
+<tr><td><code>file(s)</code></td><td>Caminho(s) do(s) arquivo(s) <code>.vgm</code>. Aceita vários arquivos ou curinga, ex.: <code>"music1.vgm" "music2.vgm"</code> ou <code>"*.vgm"</code></td></tr>
+<tr><td><code>options</code></td><td>Parâmetros opcionais para o <code>xgm2tool</code>; devem sempre começar com <code>-</code> (ex.: <code>"-dr -di"</code>), caso contrário não são reconhecidos</td></tr>
+</table>
+<p>Exemplo real (sample Sonic):</p>
+<pre class="code">XGM2 sonic_music "music/sonic1.vgm"</pre>
+<p>Header gerado: <code>extern const u8 sonic_music[];</code></p>
+</article>
+<article class="fn" id="res-WAV">
+<h4><code>WAV</code></h4>
+<p>Converte um arquivo <code>.wav</code> em formato binário utilizável com um dos drivers PCM do SGDK. O rescomp converte automaticamente o áudio para o formato exigido pelo driver escolhido.</p>
+<pre class="code">WAV name wav_file driver [out_rate [far]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da variável do sample</td></tr>
+<tr><td><code>wav_file</code></td><td>Caminho do arquivo <code>.wav</code> (convertido automaticamente para o formato correto)</td></tr>
+<tr><td><code>driver</code></td><td>Driver Z80 alvo:<br><code>PCM</code>/<code>DEFAULT</code> — 1 canal PCM, sample 8 bits com sinal, de 8 a 32 kHz; use <code>SND_PCM_startPlay(..)</code>.<br><code>DPCM2</code> — 2 canais DPCM (4 bits) a 22050 Hz fixos; use <code>SND_DPCM2_startPlay(..)</code>.<br><code>PCM4</code> — 4 canais PCM (8 bits com sinal) a 16 kHz fixos com 16 níveis de volume; use <code>SND_PCM4_startPlay(..)</code>.<br><code>XGM</code> — mixa até 4 samples (8 bits) a 14 kHz junto com a música XGM; use <code>XGM_setPCM(..)</code> e <code>XGM_startPlayPCM(..)</code>.<br><code>XGM2</code> — mixa até 3 samples (8 bits) a 13,3 ou 6,65 kHz junto com a música XGM2; use <code>XGM2_playPCM(..)</code>.<br>(Os antigos valores numéricos 0-5 e o nome <code>2ADPCM</code> não são mais aceitos.)</td></tr>
+<tr><td><code>out_rate</code></td><td>Taxa de saída do PCM — relevante apenas para os drivers <code>PCM</code> e <code>XGM2</code>. PCM aceita: 8000, 11025, 13400, 16000, 22050, 32000 (padrão 16000). XGM2 aceita apenas 6650 ou 13300 (padrão 13300)</td></tr>
+<tr><td><code>far</code></td><td>Flag de dado binário "far" — coloca o dado no final da ROM (útil para bank switch). Padrão: <code>TRUE</code></td></tr>
+</table>
+<p>Exemplos reais (sample Sonic):</p>
+<pre class="code">WAV sonic_jump_sfx "sfx/S1_jump.wav" XGM2 6650
+WAV sonic_roll_sfx "sfx/S1_roll.wav" XGM2</pre>
+<p>Header gerado: <code>extern const u8 sonic_jump_sfx[];</code></p>
+</article>
+
+<article class="fn" id="res-BIN">
+<h4><code>BIN</code></h4>
+<p>Incorpora qualquer arquivo de dados na ROM como um array binário acessível pelo código, sem conversão ou processamento específico — ideal para tabelas pré-calculadas, dados de fase próprios, fontes binárias etc.</p>
+<pre class="code">BIN name file [align [size_align [fill [compression [far]]]]]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome da variável do array de dados</td></tr>
+<tr><td><code>file</code></td><td>Caminho do arquivo de dados a converter</td></tr>
+<tr><td><code>align</code></td><td>Alinhamento do endereço de memória do array gerado (padrão: 2)</td></tr>
+<tr><td><code>size_align</code></td><td>Alinhamento do tamanho do array gerado (padrão: 2)</td></tr>
+<tr><td><code>fill</code></td><td>Valor de preenchimento usado para completar o alinhamento de tamanho (padrão: 0)</td></tr>
+<tr><td><code>compression</code></td><td>Compressão: <code>0/NONE</code>, <code>1/APLIB</code> (boa taxa, lenta), <code>2/FAST/LZ4W</code> (taxa média, rápida)</td></tr>
+<tr><td><code>far</code></td><td>Flag "far" — posiciona o dado no final da ROM (útil para bank switch). Padrão: <code>TRUE</code></td></tr>
+</table>
+<p>Exemplo:</p>
+<pre class="code">BIN nivel1_dados "data/nivel1.dat" 2 2 0 LZ4W</pre>
+<p>Header gerado: <code>extern const u8 nivel1_dados[];</code></p>
+</article>
+
+<article class="fn" id="res-ALIGN">
+<h4><code>ALIGN</code></h4>
+<p>Função (diretiva) que alinha os dados <em>binários</em> do arquivo de recursos <strong>inteiro</strong> — portanto só pode haver uma diretiva ALIGN por arquivo <code>.res</code>. É útil com bank switch em ROMs maiores que 4 MB, para evitar que um bloco de dados cruze dois bancos. Se precisar de alinhamentos diferentes, use vários arquivos <code>.res</code>.</p>
+<pre class="code">ALIGN [value]</pre>
+<table class="params">
+<tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Alinhamento mínimo dos dados binários, em bytes. Se omitido, o padrão é 524288 (512 KB), que é o tamanho do banco no mecanismo de bank switch</td></tr>
+</table>
+<p>Exemplo:</p>
+<pre class="code">ALIGN
+BIN fase_grande "data/fase_grande.dat"</pre>
+</article>
+
+<article class="fn" id="res-UNGROUP">
+<h4><code>UNGROUP</code></h4>
+<p>Por padrão o rescomp agrupa a exportação dos dados por tipo, o que geralmente melhora a compressão LZ4W. A função UNGROUP desativa esse agrupamento — útil para ajudar na separação de dados por banco quando se usa o mecanismo de bank switch.</p>
+<pre class="code">UNGROUP</pre>
+<p>Sem parâmetros; vale para todo o arquivo <code>.res</code> em que aparece.</p>
+</article>
+
+<article class="fn" id="res-NEAR">
+<h4><code>NEAR</code></h4>
+<p>Por padrão, todos os dados binários são exportados como <strong>"FAR"</strong>: ficam no final da ROM e podem exigir o mecanismo de bank switch se a ROM passar de 4 MB. A função NEAR força todos os dados binários do arquivo <code>.res</code> a serem posicionados <em>antes</em> dos dados FAR na ROM — garantindo acesso direto sem troca de banco.</p>
+<pre class="code">NEAR</pre>
+<p>Sem parâmetros; vale para todo o arquivo <code>.res</code> em que aparece.</p>
+<p class="note">Regra prática para ROMs grandes: dados acessados o tempo todo (código de fase, tabelas quentes) devem ser NEAR; assets volumosos e de acesso pontual (músicas, imagens de telas) podem permanecer FAR, combinados com <code>ALIGN</code>/<code>UNGROUP</code> para organizar os bancos.</p>
+</article>
+</section>

@@ -1,0 +1,26 @@
+// CHEFE "Lacraia" — inimigo bônus da última fase. Sprite dedicado 48x48
+// (INS_BOSS48, desenhado em 4 quadrantes); comportamento em enemy_boss.c.
+//   25 de vida · contato 20 · tiro 13 · invoca 2 lacaios/10 s · blindado 3 s/15 s
+//   resistente à bomba · fase agressiva com investidas (dash)
+// timerA/B não são usados (o comportamento tem contador próprio).
+
+#include "enemies/enemies.h"
+#include "system/video/sprites/tiles.h"
+#include "core/game.h"
+
+const EnemyDef ENEMYDEF_boss =
+{
+    .name       = "Lacraia",
+    .shape      = SHAPE_SQUARE,      // besouro/lacraia (arte própria via enemygfx)
+    .color      = COLOR_RED,         // lacraia vermelha gigante
+    .size       = 48,
+    .hp         = 25,
+    .contactDmg = 20,
+    .dropChance = 100,               // derruba item ao morrer (recompensa)
+    .speedFp    = ENEMY_SPEED_FP - 8, // um pouco mais lento que o padrão
+    .timerA     = 0,
+    .timerB     = 0,
+    .extra      = EXTRA_NONE,
+    .tile       = TILE_PEN_PUR,      // legado (o desenho usa as rotações do enemygfx)
+    .behavior   = ENEMYBOSS_update,
+};

@@ -1,0 +1,946 @@
+<section class="module" id="mod-sys">
+<h2>sys.h <span class="subtitle">Ponto de entrada, interrupções e sistema</span></h2>
+<p class="mod-desc">Unidade central do SGDK: contém os métodos de inicialização e reset, o processamento de VBlank e o gerenciamento de interrupções e callbacks. O Mega Drive possui três interrupções principais no 68000: a <strong>V-Int</strong> (interrupção vertical, nível 6), disparada ao final do período de exibição, no início do vertical blank — é o "coração" do jogo, usada para sincronizar a lógica com a taxa de quadros; a <strong>H-Int</strong> (interrupção horizontal, nível 4), disparada ao final de cada scanline (ou a cada N scanlines, conforme configurado no VDP) — usada para efeitos de raster no meio do quadro (troca de paleta, scroll por linha etc.); e a <strong>Ext-Int</strong> (interrupção externa, nível 2), disparada pelo gatilho de Light Gun. Para cada uma delas você pode registrar um callback próprio (<code>SYS_setVIntCallback</code>, <code>SYS_setHIntCallback</code>, <code>SYS_setExtIntCallback</code>), além do callback de <strong>VBlank</strong> (<code>SYS_setVBlankCallback</code>), chamado pelo SGDK dentro de <code>SYS_doVBlankProcess()</code> após as tarefas principais — é o local recomendado para acessos ao VDP. Use este módulo em todo projeto: o laço principal típico termina cada quadro com <code>SYS_doVBlankProcess()</code>, que descarrega a fila de DMA, processa fades de paleta assíncronos e faz o polling dos joypads. O módulo também oferece controle da máscara de interrupções (<code>SYS_disableInts</code>/<code>SYS_enableInts</code>), detecção NTSC/PAL, medição de FPS/carga de CPU, checksum da ROM e término com mensagem de erro (<code>SYS_die</code>).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>PROCESS_PALETTE_FADING</code> / <code>PROCESS_BITMAP_TASK</code> / <code>PROCESS_DMA_TASK</code> / <code>PROCESS_VDP_SCROLL_TASK</code></td><td><code>1&lt;&lt;0</code> … <code>1&lt;&lt;3</code></td><td>Flags internas de tarefas processadas durante o VBlank (fade de paleta, engine Bitmap, fila de DMA, scroll do VDP).</td></tr>
+<tr><td><code>ROM_ALIGN_BIT</code> / <code>ROM_ALIGN</code> / <code>ROM_ALIGN_MASK</code></td><td><code>17</code> / <code>1&lt;&lt;17</code> / <code>ROM_ALIGN-1</code></td><td>Alinhamento da ROM em 128 KB.</td></tr>
+<tr><td><code>ROM_START</code> / <code>ROM_END</code> / <code>ROM_SIZE</code></td><td>derivados de <code>_stext</code>/<code>_sdata</code></td><td>Início, fim e tamanho (alinhado) da ROM gerada.</td></tr>
+<tr><td><code>FORCE_INLINE</code></td><td><code>inline __attribute__((always_inline))</code></td><td>Força o inlining do método pelo GCC.</td></tr>
+<tr><td><code>NO_INLINE</code></td><td><code>__attribute__((noinline))</code></td><td>Impede o inlining do método.</td></tr>
+<tr><td><code>RAM_SECT</code></td><td><code>__attribute__((section(".ramprog")))</code></td><td>Coloca a função na RAM (seção <code>.data</code>) em vez de <code>.text</code> (ROM).</td></tr>
+<tr><td><code>HINTERRUPT_CALLBACK</code></td><td><code>__attribute__((interrupt)) void</code></td><td>Prefixo obrigatório para funções de callback de H-Int (gera <code>RTE</code> em vez de <code>RTS</code> no retorno).</td></tr>
+<tr><td><code>PACKED</code></td><td><code>__attribute__((__packed__))</code></td><td>Empacota structs/enums sem padding.</td></tr>
+<tr><td><code>busErrorCB</code>, <code>addressErrorCB</code>, <code>illegalInstCB</code>, <code>zeroDivideCB</code>, <code>chkInstCB</code>, <code>trapvInstCB</code>, <code>privilegeViolationCB</code>, <code>traceCB</code>, <code>line1x1xCB</code>, <code>errorExceptionCB</code></td><td><code>VoidCallback*</code></td><td>Ponteiros de callback para exceções do 68000 (bus error, address error, instrução ilegal, divisão por zero etc.). Disponíveis apenas com <code>LEGACY_ERROR_HANDLER</code> habilitado; podem ser substituídos para depuração.</td></tr>
+<tr><td><code>intCB</code></td><td><code>VoidCallback*</code></td><td>Callback de interrupção de nível (level interrupt); pode ser substituído pelo usuário.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-ROMHeader">
+<h4><code>ROMHeader</code></h4>
+<p>Estrutura que espelha o cabeçalho da ROM Mega Drive (definido em <code>rom_head.c</code>). A instância global <code>rom_header</code> é exportada como <code>extern const ROMHeader rom_header;</code>.</p>
+<pre class="code">typedef struct
+{
+    char console[16];       /* nome do console (16) */
+    char copyright[16];     /* informação de copyright (16) */
+    char title_local[48];   /* título doméstico (48) */
+    char title_int[48];     /* título internacional (48) */
+    char serial[14];        /* número de série (2+12) */
+    u16  checksum;          /* checksum da ROM (2) */
+    char IOSupport[16];     /* suporte de I/O (16) */
+    u32  rom_start;         /* endereço inicial da ROM */
+    u32  rom_end;           /* endereço final da ROM */
+    u32  ram_start;         /* início da RAM de backup */
+    u32  ram_end;           /* fim da RAM de backup */
+    char sram_sig[2];       /* "RA" quando há SRAM de save */
+    u16  sram_type;         /* 0xF820 = SRAM nos bytes ímpares */
+    u32  sram_start;        /* início da SRAM (normalmente 0x200001) */
+    u32  sram_end;          /* fim da SRAM (start + 2*tamanho) */
+    char modem_support[12]; /* suporte a modem */
+    char notes[40];         /* memo / observações */
+    char region[16];        /* regiões suportadas */
+} ROMHeader;</pre>
+</article>
+<article class="type" id="type-VBlankProcessTime">
+<h4><code>VBlankProcessTime</code></h4>
+<p>Define em que momento o processamento de VBlank deve iniciar (usado por <code>SYS_doVBlankProcessEx()</code>).</p>
+<pre class="code">typedef enum
+{
+    IMMEDIATELY,    /* inicia imediatamente, dentro ou fora do blanking */
+    ON_VBLANK,      /* inicia no período de VBlank (imediato se já estamos nele) */
+    ON_VBLANK_START /* espera o próximo *início* de VBlank se ele foi perdido (recomendado) */
+} VBlankProcessTime;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-SYS_assertReset">
+<h4><code>void SYS_assertReset(void)</code></h4>
+<p>Ativa (assert) o pino de reset do 68000. Necessário para reinicializar alguns hardwares conectados ao console.</p>
+</article>
+<article class="fn" id="fn-SYS_reset">
+<h4><code>void SYS_reset(void)</code></h4>
+<p>Executa um soft reset (reset por software) do sistema.</p>
+</article>
+<article class="fn" id="fn-SYS_hardReset">
+<h4><code>void SYS_hardReset(void)</code></h4>
+<p>Executa um hard reset: força a reinicialização do hardware e a limpeza/reset da memória.</p>
+</article>
+<article class="fn" id="fn-SYS_doVBlankProcess">
+<h4><code>bool SYS_doVBlankProcess(void)</code></h4>
+<p>Espera o início do VBlank e executa todo o processamento de VBlank do SGDK: descarrega a fila de DMA, processa a operação assíncrona de fade de paleta e faz o polling dos joypads. As transferências de dados para o VDP devem ocorrer nesse período, pois o VDP está ocioso. Equivale a <code>SYS_doVBlankProcessEx(ON_VBLANK_START)</code>.</p>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se o processo foi cancelado por ter sido chamado de dentro do callback de V-Int (a função sai pois a V-Int será disparada imediatamente).</p>
+<p class="note">Se o início do VBlank for perdido, o processamento é adiado para o próximo VBlank, causando a perda de um quadro.</p>
+</article>
+<article class="fn" id="fn-SYS_doVBlankProcessEx">
+<h4><code>bool SYS_doVBlankProcessEx(VBlankProcessTime processTime)</code></h4>
+<p>Versão estendida de <code>SYS_doVBlankProcess()</code> que permite escolher em que momento o processamento de VBlank começa (fila de DMA, fade de paleta, polling de joypad...).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>processTime</code></td><td><code>IMMEDIATELY</code> = inicia imediatamente, esteja ou não em blanking (fortemente desaconselhado); <code>ON_VBLANK</code> = inicia no período de VBlank, imediatamente se já estivermos nele (desaconselhado, o VBlank pode ficar curto demais); <code>ON_VBLANK_START</code> = espera o próximo início de VBlank (valor recomendado, garante DMA rápido e evita glitches gráficos por atualização de VRAM durante o display ativo).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se o processo foi cancelado (com <code>ON_VBLANK_START</code>) por ter sido chamado do callback de V-Int.</p>
+</article>
+<article class="fn" id="fn-SYS_nextFrame">
+<h4><code>bool SYS_nextFrame(void)</code></h4>
+<p>Finaliza o quadro atual; apelido (alias) de <code>SYS_doVBlankProcess()</code>. Executa todo o processo interno de VBlank do SGDK (flush de DMA, upload de dados ao VDP, fade assíncrono de paleta, atualização de scroll...).</p>
+<p class="returns"><strong>Retorna:</strong> o mesmo que <code>SYS_doVBlankProcess()</code>.</p>
+</article>
+<article class="fn" id="fn-SYS_getStackPointer">
+<h4><code>u32 SYS_getStackPointer()</code></h4>
+<p>Retorna o valor atual do registrador de ponteiro de pilha (A7).</p>
+<p class="returns"><strong>Retorna:</strong> valor atual de A7.</p>
+</article>
+<article class="fn" id="fn-SYS_getInterruptMaskLevel">
+<h4><code>u16 SYS_getInterruptMaskLevel(void)</code></h4>
+<p>Retorna o nível atual da máscara de interrupções do 68000. Interrupções com nível &lt;= máscara são ignoradas (V-Int = nível 6, H-Int = nível 4, Ext-Int = nível 2).</p>
+<p class="returns"><strong>Retorna:</strong> nível atual da máscara de interrupções.</p>
+</article>
+<article class="fn" id="fn-SYS_setInterruptMaskLevel">
+<h4><code>void SYS_setInterruptMaskLevel(u16 value)</code></h4>
+<p>Define o nível da máscara de interrupções. Interrupções com nível &lt;= máscara são ignoradas. Os três níveis são: V-Int (vertical) = 6, H-Int (horizontal) = 4, Ext-Int (externa) = 2 — a V-Int tem a maior prioridade. Por exemplo, para desabilitar a interrupção vertical use <code>SYS_setInterruptMaskLevel(6)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Novo nível da máscara de interrupções (0 a 7).</td></tr></table>
+</article>
+<article class="fn" id="fn-SYS_getAndSetInterruptMaskLevel">
+<h4><code>u16 SYS_getAndSetInterruptMaskLevel(u16 value)</code></h4>
+<p>Define a máscara de interrupções para o valor dado e retorna o nível anterior (operação combinada, útil para salvar/restaurar o estado).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Novo nível da máscara de interrupções.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o nível de máscara anterior.</p>
+</article>
+<article class="fn" id="fn-SYS_disableInts">
+<h4><code>void SYS_disableInts(void)</code></h4>
+<p>Desabilita as interrupções (vertical, horizontal e externa). Use para proteger trechos de código sensíveis (em geral acessos a portas de I/O ou ao VDP quando seus callbacks de interrupção também mexem no VDP). Deve sempre ser seguida por <code>SYS_enableInts()</code>.</p>
+<p class="note">As chamadas <code>SYS_disableInts()</code> / <code>SYS_enableInts()</code> podem ser aninhadas. Por padrão o SGDK não faz nada "perigoso" nos seus handlers de interrupção (exceto na engine Bitmap), então a proteção só é necessária se o seu callback de interrupção manipular o VDP.</p>
+</article>
+<article class="fn" id="fn-SYS_enableInts">
+<h4><code>void SYS_enableInts(void)</code></h4>
+<p>Reabilita as interrupções após uma chamada a <code>SYS_disableInts()</code>. Suporta aninhamento.</p>
+</article>
+<article class="fn" id="fn-SYS_setVBlankCallback">
+<h4><code>void SYS_setVBlankCallback(VoidCallback *CB)</code></h4>
+<p>Define o callback de usuário do período de VBlank. O SGDK o chama de dentro de <code>SYS_doVBlankProcess()</code>, após as tarefas principais. É o callback recomendado (em vez do de V-Int) quando você precisa fazer acessos ao VDP, pois roda em contexto normal, fora da interrupção.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>CB</code></td><td>Ponteiro para o método a chamar no VBlank; passe <code>NULL</code> para remover o callback atual.</td></tr></table>
+</article>
+<article class="fn" id="fn-SYS_setVIntCallback">
+<h4><code>void SYS_setVIntCallback(VoidCallback *CB)</code></h4>
+<p>Define o callback de interrupção vertical (V-Int), que ocorre no fim do período de exibição, no início do VBlank. Prefira <code>SYS_setVBlankCallback()</code> quando possível. O SGDK só processa obrigatoriamente na V-Int o tempo da música do driver XGM e o reset de fase da engine Bitmap.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>CB</code></td><td>Ponteiro para o método a chamar na V-Int; <code>NULL</code> remove o callback.</td></tr></table>
+<p class="note">Mantenha o código do callback o mais rápido possível (ele consome tempo precioso de VBlank) e evite tocar no VDP a partir dele — caso contrário será preciso proteger todos os acessos ao VDP do laço principal.</p>
+</article>
+<article class="fn" id="fn-SYS_setHIntCallback">
+<h4><code>void SYS_setHIntCallback(VoidCallback *CB)</code></h4>
+<p>Define o callback de interrupção horizontal (H-Int), disparada ao final da exibição de cada scanline, logo antes do horizontal blank. Usada para efeitos de raster no meio do quadro (troca de paleta, scroll, etc.). A função de callback precisa ser declarada com o prefixo <code>HINTERRUPT_CALLBACK</code>:</p>
+<pre class="code">HINTERRUPT_CALLBACK myHIntFunction()
+{
+    ...
+}</pre>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>CB</code></td><td>Ponteiro para o método a chamar na H-Int; <code>NULL</code> remove o callback.</td></tr></table>
+<p class="note">Se o callback acessar o VDP, proteja os acessos ao VDP feitos no laço principal com <code>SYS_disableInts()</code> / <code>SYS_enableInts()</code> para não corromper as escritas.</p>
+</article>
+<article class="fn" id="fn-SYS_setExtIntCallback">
+<h4><code>void SYS_setExtIntCallback(VoidCallback *CB)</code></h4>
+<p>Define o callback de interrupção externa (Ext-Int), que ocorre no gatilho de Light Gun (o HVCounter é travado nesse momento).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>CB</code></td><td>Ponteiro para o método a chamar na interrupção externa; <code>NULL</code> remove o callback.</td></tr></table>
+</article>
+<article class="fn" id="fn-SYS_isInVInt">
+<h4><code>bool SYS_isInVInt(void)</code></h4>
+<p>Testa se estamos atualmente dentro do processamento da interrupção vertical (callback de V-Int).</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se estamos no processamento da V-Int.</p>
+</article>
+<article class="fn" id="fn-SYS_isNTSC">
+<h4><code>u16 SYS_isNTSC(void)</code></h4>
+<p>Indica se o console é NTSC (60 Hz).</p>
+<p class="returns"><strong>Retorna:</strong> valor != 0 em sistema NTSC.</p>
+<p class="note">Prefira usar a macro <code>IS_PAL_SYSTEM</code>.</p>
+</article>
+<article class="fn" id="fn-SYS_isPAL">
+<h4><code>u16 SYS_isPAL(void)</code></h4>
+<p>Indica se o console é PAL (50 Hz).</p>
+<p class="returns"><strong>Retorna:</strong> valor != 0 em sistema PAL.</p>
+<p class="note">Prefira usar a macro <code>IS_PAL_SYSTEM</code>.</p>
+</article>
+<article class="fn" id="fn-SYS_getFPS">
+<h4><code>u32 SYS_getFPS(void)</code></h4>
+<p>Retorna o número de quadros por segundo. Na prática, retorna quantas vezes a função foi chamada no último segundo — para benchmarking, chame-a apenas uma vez por atualização de quadro.</p>
+<p class="returns"><strong>Retorna:</strong> FPS como inteiro.</p>
+</article>
+<article class="fn" id="fn-SYS_getFPSAsFloat">
+<h4><code>fix32 SYS_getFPSAsFloat(void)</code></h4>
+<p>Igual a <code>SYS_getFPS()</code>, mas retorna o valor em ponto fixo <code>fix32</code> (maior precisão). Chame apenas uma vez por quadro.</p>
+<p class="returns"><strong>Retorna:</strong> FPS em formato <code>fix32</code>.</p>
+</article>
+<article class="fn" id="fn-SYS_getCPULoad">
+<h4><code>u16 SYS_getCPULoad(void)</code></h4>
+<p>Retorna uma estimativa da carga de CPU por quadro (em %, média calculada sobre 8 quadros), baseada no tempo ocioso gasto em <code>VDP_waitVSync()</code> / <code>VDP_waitVInt()</code>.</p>
+<p class="returns"><strong>Retorna:</strong> carga de CPU em %; pode passar de 100% se a carga exceder 1 quadro.</p>
+</article>
+<article class="fn" id="fn-SYS_getShowFrameLoad">
+<h4><code>bool SYS_getShowFrameLoad()</code></h4>
+<p>Informa se o indicador de carga de quadro está sendo exibido.</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o indicador de carga está visível, <code>FALSE</code> caso contrário.</p>
+</article>
+<article class="fn" id="fn-SYS_showFrameLoad">
+<h4><code>void SYS_showFrameLoad(bool mean)</code></h4>
+<p>Exibe um cursor indicando o nível de carga do quadro atual em scanline (topo = 0%, base = 100%), marcando a scanline alcançada quando <code>VDP_waitVSync()</code> / <code>VDP_waitVInt()</code> foi chamado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>mean</code></td><td>Se <code>TRUE</code>, a exibição usa a média de carga de 8 quadros.</td></tr></table>
+<p class="note">Internamente usa o sprite 0 do VDP (paleta 0, cor 15). A Sprite Engine não usa esse sprite diretamente, mas se você usa os métodos de sprite de baixo nível do VDP, saiba que o sprite 0 será ocupado.</p>
+</article>
+<article class="fn" id="fn-SYS_hideFrameLoad">
+<h4><code>void SYS_hideFrameLoad(void)</code></h4>
+<p>Esconde o cursor de carga de quadro habilitado anteriormente com <code>SYS_showFrameLoad()</code>.</p>
+</article>
+<article class="fn" id="fn-SYS_computeChecksum">
+<h4><code>u16 SYS_computeChecksum(void)</code></h4>
+<p>Calcula o checksum completo da ROM e o retorna. O checksum é um algoritmo rápido customizado de 32 bits convertido para 16 bits ao final.</p>
+<p class="returns"><strong>Retorna:</strong> checksum de 16 bits da ROM.</p>
+</article>
+<article class="fn" id="fn-SYS_isChecksumOk">
+<h4><code>bool SYS_isChecksumOk(void)</code></h4>
+<p>Verifica a integridade da ROM comparando o checksum calculado com o campo <code>checksum</code> do cabeçalho (<code>rom_head</code>).</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o checksum confere.</p>
+</article>
+<article class="fn" id="fn-SYS_die">
+<h4><code>void SYS_die(char *err, ...)</code></h4>
+<p>Termina a execução com a mensagem de erro especificada: exibe a mensagem e interrompe o programa. Aceita uma lista de strings, que deve terminar com um valor <code>NULL</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>err, ...</code></td><td>Lista de strings de erro, terminada por <code>NULL</code>.</td></tr></table>
+</article>
+</section>
+<section class="module" id="mod-memory">
+<h2>memory.h <span class="subtitle">Alocação dinâmica e operações de memória</span></h2>
+<p class="mod-desc">Fornece operações de cópia/preenchimento de memória e alocação dinâmica de memória na RAM do Mega Drive. A memória gerenciada é organizada em blocos: os 2 primeiros bytes de cada bloco definem seu tamanho e estado — bits 15-1 = tamanho em número de words (2 bytes), bit 0 = estado de uso (1 = usado, 0 = livre). Para alcançar o bloco seguinte basta fazer <code>next_bloc_address = bloc_address + bloc_size</code>; o fim da memória é marcado por um bloco de tamanho 0. Use este módulo sempre que precisar de <code>malloc</code>/<code>free</code> (com <code>ENABLE_NEWLIB == 0</code>, <code>malloc</code> e <code>free</code> são mapeados para <code>MEM_alloc</code>/<code>MEM_free</code>), de <code>memset</code>/<code>memcpy</code> otimizados, ou de diagnóstico do heap (fragmentação, integridade, dump).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>malloc(x)</code> / <code>free(x)</code></td><td><code>MEM_alloc(x)</code> / <code>MEM_free(x)</code></td><td>Compatibilidade com a libc padrão (apenas quando <code>ENABLE_NEWLIB == 0</code>).</td></tr>
+<tr><td><code>memcpyU16</code>, <code>memcpyU32</code>, <code>fastMemset</code>, <code>fastMemsetU16</code>, <code>fastMemsetU32</code>, <code>astMemcpy</code>, <code>fastMemcpyU16</code>, <code>fastMemcpyU32</code></td><td><code>_Pragma(GCC error ...)</code></td><td>Macros obsoletas (deprecated): geram erro de compilação orientando a usar <code>memcpy</code>/<code>memset</code>/<code>memsetU16</code>/<code>memsetU32</code>.</td></tr>
+</table>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-GET_DWORDFROMPBYTE">
+<h4><code>GET_DWORDFROMPBYTE(src)</code></h4>
+<p>Macro funcional: obtém um <code>u32</code> a partir de um array de <code>u8</code> em ordem Big-Endian (<code>(src[0]&lt;&lt;24) | (src[1]&lt;&lt;16) | (src[2]&lt;&lt;8) | src[3]</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Ponteiro/array de bytes de origem.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor <code>u32</code> montado.</p>
+</article>
+<article class="fn" id="fn-GET_DWORDFROMPBYTE_LI">
+<h4><code>GET_DWORDFROMPBYTE_LI(src)</code></h4>
+<p>Macro funcional: obtém um <code>u32</code> a partir de um array de <code>u8</code> em ordem Little-Endian.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Ponteiro/array de bytes de origem.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor <code>u32</code> montado.</p>
+</article>
+<article class="fn" id="fn-GET_WORDFROMPBYTE">
+<h4><code>GET_WORDFROMPBYTE(src)</code></h4>
+<p>Macro funcional: obtém um <code>u16</code> a partir de um array de <code>u8</code> em ordem Big-Endian.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Ponteiro/array de bytes de origem.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor <code>u16</code> montado.</p>
+</article>
+<article class="fn" id="fn-GET_WORDFROMPBYTE_LI">
+<h4><code>GET_WORDFROMPBYTE_LI(src)</code></h4>
+<p>Macro funcional: obtém um <code>u16</code> a partir de um array de <code>u8</code> em ordem Little-Endian.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Ponteiro/array de bytes de origem.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor <code>u16</code> montado.</p>
+</article>
+<article class="fn" id="fn-GET_DWORDFROMPWORD">
+<h4><code>GET_DWORDFROMPWORD(src)</code></h4>
+<p>Macro funcional: obtém um <code>u32</code> a partir de um array de <code>u16</code> em ordem Big-Endian (<code>(src[0]&lt;&lt;16) | src[1]</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Ponteiro/array de words de origem.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor <code>u32</code> montado.</p>
+</article>
+<article class="fn" id="fn-GET_DWORDFROMPWORD_LI">
+<h4><code>GET_DWORDFROMPWORD_LI(src)</code></h4>
+<p>Macro funcional: obtém um <code>u32</code> a partir de um array de <code>u16</code> em ordem Little-Endian.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Ponteiro/array de words de origem.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor <code>u32</code> montado.</p>
+</article>
+<article class="fn" id="fn-SWAP_u8">
+<h4><code>SWAP_u8(x, y)</code></h4>
+<p>Macro funcional: troca o valor de duas variáveis <code>u8</code> usando uma variável temporária.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code>, <code>y</code></td><td>Variáveis <code>u8</code> cujos valores serão trocados entre si.</td></tr></table>
+</article>
+<article class="fn" id="fn-SWAP_s8">
+<h4><code>SWAP_s8(x, y)</code></h4>
+<p>Macro funcional: troca o valor de duas variáveis <code>s8</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code>, <code>y</code></td><td>Variáveis <code>s8</code> cujos valores serão trocados entre si.</td></tr></table>
+</article>
+<article class="fn" id="fn-SWAP_u16">
+<h4><code>SWAP_u16(x, y)</code></h4>
+<p>Macro funcional: troca o valor de duas variáveis <code>u16</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code>, <code>y</code></td><td>Variáveis <code>u16</code> cujos valores serão trocados entre si.</td></tr></table>
+</article>
+<article class="fn" id="fn-SWAP_s16">
+<h4><code>SWAP_s16(x, y)</code></h4>
+<p>Macro funcional: troca o valor de duas variáveis <code>s16</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code>, <code>y</code></td><td>Variáveis <code>s16</code> cujos valores serão trocados entre si.</td></tr></table>
+</article>
+<article class="fn" id="fn-SWAP_u32">
+<h4><code>SWAP_u32(x, y)</code></h4>
+<p>Macro funcional: troca o valor de duas variáveis <code>u32</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code>, <code>y</code></td><td>Variáveis <code>u32</code> cujos valores serão trocados entre si.</td></tr></table>
+</article>
+<article class="fn" id="fn-SWAP_s32">
+<h4><code>SWAP_s32(x, y)</code></h4>
+<p>Macro funcional: troca o valor de duas variáveis <code>s32</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code>, <code>y</code></td><td>Variáveis <code>s32</code> cujos valores serão trocados entre si.</td></tr></table>
+</article>
+<article class="fn" id="fn-MEM_getFree">
+<h4><code>u16 MEM_getFree(void)</code></h4>
+<p>Retorna a quantidade de memória disponível no heap.</p>
+<p class="returns"><strong>Retorna:</strong> memória livre em bytes.</p>
+</article>
+<article class="fn" id="fn-MEM_getAllocated">
+<h4><code>u16 MEM_getAllocated(void)</code></h4>
+<p>Retorna a quantidade de memória atualmente alocada no heap.</p>
+<p class="returns"><strong>Retorna:</strong> memória alocada em bytes.</p>
+</article>
+<article class="fn" id="fn-MEM_getLargestFreeBlock">
+<h4><code>u16 MEM_getLargestFreeBlock(void)</code></h4>
+<p>Retorna o tamanho do maior bloco livre contíguo (útil para avaliar fragmentação).</p>
+<p class="returns"><strong>Retorna:</strong> tamanho do maior bloco livre em bytes.</p>
+</article>
+<article class="fn" id="fn-MEM_free">
+<h4><code>void MEM_free(void* ptr)</code></h4>
+<p>Libera um bloco de memória previamente alocado com <code>MEM_alloc</code>, tornando-o disponível para novas alocações.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ptr</code></td><td>Ponteiro para o bloco a liberar; se for <code>NULL</code>, nada acontece.</td></tr></table>
+<p class="note">O valor de <code>ptr</code> não é alterado — ele continua apontando para a mesma posição (agora inválida), e não para <code>NULL</code>.</p>
+</article>
+<article class="fn" id="fn-MEM_alloc">
+<h4><code>void* MEM_alloc(u16 size)</code></h4>
+<p>Aloca um bloco de <code>size</code> bytes de memória e retorna um ponteiro para o início do bloco. O conteúdo do bloco não é inicializado (valores indeterminados).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>size</code></td><td>Número de bytes a alocar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro <code>void*</code> para o bloco alocado; <code>NULL</code> se a alocação falhou ou se <code>size = 0</code>.</p>
+</article>
+<article class="fn" id="fn-MEM_allocAt">
+<h4><code>void* MEM_allocAt(u32 addr, u16 size)</code></h4>
+<p>Aloca um bloco de memória em um endereço específico (útil para endereçamento curto — short addressing — ou para um endereço de trabalho fixo de baixo nível).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>addr</code></td><td>Endereço onde a memória deve ser alocada.</td></tr>
+<tr><td><code>size</code></td><td>Número de bytes a alocar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o bloco alocado (deve coincidir com <code>addr</code>); <code>NULL</code> em caso de falha ou <code>size = 0</code>.</p>
+</article>
+<article class="fn" id="fn-MEM_pack">
+<h4><code>void MEM_pack(void)</code></h4>
+<p>Compacta todos os blocos livres e reinicia a busca de alocação a partir do início do heap. Pode ser chamada antes de alocar blocos pequenos para reduzir a fragmentação da memória.</p>
+<p class="note">Desde o SGDK 2.12 o gerenciador de memória realiza "auto packing", então não é mais necessário chamar este método.</p>
+</article>
+<article class="fn" id="fn-MEM_checkIntegrity">
+<h4><code>bool MEM_checkIntegrity()</code></h4>
+<p>Executa um teste de integridade no gerenciador de memória e no ponteiro de pilha. O método pode não detectar todas as corrupções possíveis, mas se falhar, com certeza há corrupção de memória em algum lugar.</p>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se o teste de integridade falhou (logs são gerados).</p>
+</article>
+<article class="fn" id="fn-MEM_dump">
+<h4><code>void MEM_dump(void)</code></h4>
+<p>Faz um dump da memória no console do GensKMod (útil para depuração).</p>
+</article>
+<article class="fn" id="fn-memset">
+<h4><code>void memset(void* to, u8 value, u16 len)</code></h4>
+<p>Preenche os primeiros <code>len</code> bytes do bloco de memória apontado por <code>to</code> com o valor especificado. Disponível apenas quando <code>ENABLE_NEWLIB == 0</code> (senão a implementação da newlib é usada).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>to</code></td><td>Ponteiro para o bloco de memória a preencher.</td></tr>
+<tr><td><code>value</code></td><td>Valor a gravar.</td></tr>
+<tr><td><code>len</code></td><td>Número de <code>u8</code> (bytes) a preencher.</td></tr></table>
+</article>
+<article class="fn" id="fn-memsetU16">
+<h4><code>void memsetU16(u16* to, u16 value, u16 len)</code></h4>
+<p>Preenche um bloco de memória com um valor de 16 bits (versão otimizada para <code>u16</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>to</code></td><td>Ponteiro para o bloco de memória a preencher.</td></tr>
+<tr><td><code>value</code></td><td>Valor de 16 bits a gravar.</td></tr>
+<tr><td><code>len</code></td><td>Número de shorts (<code>u16</code>) a preencher.</td></tr></table>
+</article>
+<article class="fn" id="fn-memsetU32">
+<h4><code>void memsetU32(u32* to, u32 value, u16 len)</code></h4>
+<p>Preenche um bloco de memória com um valor de 32 bits (versão otimizada para <code>u32</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>to</code></td><td>Ponteiro para o bloco de memória a preencher.</td></tr>
+<tr><td><code>value</code></td><td>Valor de 32 bits a gravar.</td></tr>
+<tr><td><code>len</code></td><td>Número de longs (<code>u32</code>) a preencher.</td></tr></table>
+</article>
+<article class="fn" id="fn-memcpy">
+<h4><code>void memcpy(void* to, const void* from, u16 len)</code></h4>
+<p>Copia <code>len</code> bytes da posição apontada por <code>from</code> diretamente para o bloco apontado por <code>to</code> (cópia binária, o tipo dos dados é irrelevante). Disponível apenas quando <code>ENABLE_NEWLIB == 0</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>to</code></td><td>Ponteiro para o destino da cópia.</td></tr>
+<tr><td><code>from</code></td><td>Ponteiro para a origem dos dados.</td></tr>
+<tr><td><code>len</code></td><td>Número de bytes a copiar.</td></tr></table>
+</article>
+<article class="fn" id="fn-memcmp">
+<h4><code>s8 memcmp(const void* pointer1, const void* pointer2, size_t len)</code></h4>
+<p>Compara lexicograficamente os primeiros <code>len</code> bytes dos blocos de memória apontados por <code>pointer1</code> e <code>pointer2</code>. Disponível apenas quando <code>ENABLE_NEWLIB == 0</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pointer1</code></td><td>Ponteiro para o primeiro bloco de memória.</td></tr>
+<tr><td><code>pointer2</code></td><td>Ponteiro para o segundo bloco de memória.</td></tr>
+<tr><td><code>len</code></td><td>Número de bytes a comparar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor cujo sinal é o sinal da diferença entre o primeiro par de bytes que difere (ambos interpretados como unsigned char); 0 se os blocos são iguais.</p>
+</article>
+</section>
+<section class="module" id="mod-memory-base">
+<h2>memory_base.h <span class="subtitle">Definições básicas de endereços de memória</span></h2>
+<p class="mod-desc">Unidade mínima com as definições básicas de endereços de memória do Mega Drive. É mantida em um header separado para poder ser incluída/usada também em arquivos assembly quando necessário. Não declara nenhuma função — apenas constantes que delimitam ROM, RAM, pilha e o limite superior da alocação dinâmica usada por <code>memory.h</code>.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>ROM</code></td><td><code>0x00000000</code></td><td>Início da região de ROM.</td></tr>
+<tr><td><code>RAM</code></td><td><code>0xE0FF0000</code></td><td>Início da região de RAM.</td></tr>
+<tr><td><code>STACK_SIZE</code></td><td><code>0x0A00</code></td><td>Memória reservada para a pilha (padrão = 0xA00 = 2560 bytes).</td></tr>
+<tr><td><code>MEMORY_HIGH</code></td><td><code>0xE1000000 - STACK_SIZE</code></td><td>Limite superior de endereço para a alocação dinâmica de memória.</td></tr>
+</table>
+</div>
+</section>
+<section class="module" id="mod-dma">
+<h2>dma.h <span class="subtitle">Transferências DMA e fila de DMA</span></h2>
+<p class="mod-desc">Fornece os métodos para usar as capacidades de DMA do hardware — a forma mais rápida de transferir dados da ROM/RAM do 68000 para as memórias do VDP (VRAM, CRAM e VSRAM). O conceito central é a <strong>fila de DMA</strong> (DMA queue): em vez de executar cada transferência na hora, você a enfileira durante o quadro (<code>DMA_queueDma</code>, <code>DMA_copyAndQueueDma</code>, <code>DMA_allocateAndQueueDma</code> ou <code>DMA_transfer</code> com <code>DMA_QUEUE</code>) e todas as operações pendentes são disparadas em rajada por <code>DMA_flushQueue()</code> — chamada automaticamente no VBlank por <code>SYS_doVBlankProcess()</code> quando o auto-flush está ativo. Transferir durante o <strong>VBlank</strong> é essencial por dois motivos: o VDP está ocioso (a banda de DMA disponível é muito maior — cerca de 7,2 KB por VBlank em NTSC e até 15 KB em PAL), e escrever na VRAM durante o display ativo pode causar glitches visuais além de ser bem mais lento. O módulo também oferece transferências imediatas (<code>DMA_doDma</code>), cópia por CPU para testes (<code>DMA_doCPUCopy</code>), operações de fill/copy internas da VRAM, um buffer temporário associado à fila e controles de capacidade máxima por quadro (para limitar o custo do flush e evitar slowdowns).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>DMA_VRAM</code></td><td><code>0</code></td><td>Destino VRAM para operação de DMA.</td></tr>
+<tr><td><code>DMA_CRAM</code></td><td><code>1</code></td><td>Destino CRAM (paletas) para operação de DMA.</td></tr>
+<tr><td><code>DMA_VSRAM</code></td><td><code>2</code></td><td>Destino VSRAM (scroll vertical) para operação de DMA.</td></tr>
+<tr><td><code>DMA_QUEUE_SIZE_DEFAULT</code> / <code>DMA_QUEUE_SIZE_MIN</code></td><td><code>80</code> / <code>32</code></td><td>Tamanho padrão e mínimo da fila de DMA (número de operações).</td></tr>
+<tr><td><code>DMA_TRANSFER_CAPACITY_NTSC</code> / <code>_PAL_LOW</code> / <code>_PAL_MAX</code></td><td><code>7200</code> / <code>8000</code> / <code>15000</code></td><td>Capacidade de transferência por VBlank (em bytes) em NTSC / PAL (baixa) / PAL (máxima).</td></tr>
+<tr><td><code>DMA_BUFFER_SIZE_NTSC</code> / <code>_PAL_LOW</code> / <code>_PAL_MAX</code> / <code>_MIN</code></td><td><code>8192</code> / <code>8192</code> / <code>14336</code> / <code>2048</code></td><td>Tamanhos do buffer temporário de DMA (um pouco maiores que a capacidade de DMA).</td></tr>
+<tr><td><code>dmaQueues</code></td><td><code>DMAOpInfo*</code></td><td>Variável global: estrutura da fila de DMA.</td></tr>
+<tr><td><code>dmaDataBuffer</code></td><td><code>u16*</code></td><td>Variável global: buffer de dados temporário da fila de DMA.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-TransferMethod">
+<h4><code>TransferMethod</code></h4>
+<p>Método de transferência para a VRAM/CRAM/VSRAM (usado por <code>DMA_transfer()</code>).</p>
+<pre class="code">typedef enum
+{
+    CPU = 0,           /* transferência imediata pela CPU (mais lenta; útil para testes) */
+    DMA = 1,           /* transferência imediata por DMA (rápida, mas pode travar o Z80) */
+    DMA_QUEUE = 2,     /* enfileira na fila de DMA; transferida no próximo VBlank */
+    DMA_QUEUE_COPY = 3 /* copia o buffer e enfileira; transferida no próximo VBlank */
+} TransferMethod;</pre>
+</article>
+<article class="type" id="type-DMAOpInfo">
+<h4><code>DMAOpInfo</code></h4>
+<p>Definição de uma transferência DMA (entrada da fila de DMA): valores pré-calculados dos registradores do VDP para disparo rápido.</p>
+<pre class="code">typedef struct
+{
+    u16 regLenL;       /* tamanho baixo: (newLen &amp; 0xFF) | 0x9300 */
+    u16 regLenH;       /* tamanho alto: ((newLen &gt;&gt; 8) &amp; 0xFF) | 0x9400 */
+    u32 regAddrMStep;  /* endereço médio + passo de incremento */
+    u32 regAddrHAddrL; /* endereço alto e baixo da origem */
+    u32 regCtrlWrite;  /* comando de controle do VDP (destino) */
+} DMAOpInfo;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-DMA_init">
+<h4><code>void DMA_init(void)</code></h4>
+<p>Inicializa o subsistema de fila de DMA com as configurações padrão. O SGDK chama este método automaticamente no hard reset, então você não precisa chamá-lo, a menos que queira alterar os parâmetros padrão — nesse caso, use <code>DMA_initEx()</code>.</p>
+</article>
+<article class="fn" id="fn-DMA_initEx">
+<h4><code>void DMA_initEx(u16 size, u16 capacity, u16 bufferSize)</code></h4>
+<p>Inicializa o subsistema de fila de DMA com parâmetros customizados.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>size</code></td><td>Tamanho da fila (0 = padrão = 64; mínimo = 20).</td></tr>
+<tr><td><code>capacity</code></td><td>Tamanho máximo permitido (em bytes) para transferir por chamada de <code>DMA_flushQueue()</code> (0 = padrão = sem limite). Conforme a estratégia selecionada (ver <code>DMA_setIgnoreOverCapacity()</code>), transferências além do limite podem ser ignoradas.</td></tr>
+<tr><td><code>bufferSize</code></td><td>Tamanho do buffer (em bytes) para dados temporários transferidos pela fila (0 = padrão = 8192 em NTSC e 14336 em PAL). Deve ser grande o bastante para todos os dados temporários até o próximo <code>DMA_flushQueue()</code>.</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_getAutoFlush">
+<h4><code>bool DMA_getAutoFlush(void)</code></h4>
+<p>Informa se <code>DMA_flushQueue()</code> é chamada automaticamente no VBlank para processar as operações de DMA pendentes na fila.</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o auto-flush está ativo.</p>
+</article>
+<article class="fn" id="fn-DMA_setAutoFlush">
+<h4><code>void DMA_setAutoFlush(bool value)</code></h4>
+<p>Se <code>TRUE</code> (padrão), <code>DMA_flushQueue()</code> é chamada automaticamente no VBlank; caso contrário você deve chamar <code>DMA_flushQueue()</code> por conta própria.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td><code>TRUE</code> para ativar o flush automático no VBlank.</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_getMaxQueueSize">
+<h4><code>u16 DMA_getMaxQueueSize(void)</code></h4>
+<p>Retorna o número máximo de transferências pendentes permitidas na fila (tamanho alocado da fila).</p>
+<p class="returns"><strong>Retorna:</strong> tamanho máximo da fila.</p>
+</article>
+<article class="fn" id="fn-DMA_setMaxQueueSize">
+<h4><code>void DMA_setMaxQueueSize(u16 value)</code></h4>
+<p>Define o número máximo de transferências pendentes na fila (tamanho alocado da fila).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Tamanho da fila (mínimo permitido = 20).</td></tr></table>
+<p class="note"><strong>ATENÇÃO:</strong> alterar o tamanho da fila limpa a fila de DMA.</p>
+</article>
+<article class="fn" id="fn-DMA_setMaxQueueSizeToDefault">
+<h4><code>void DMA_setMaxQueueSizeToDefault(void)</code></h4>
+<p>Restaura o tamanho máximo da fila para o valor padrão (64).</p>
+<p class="note"><strong>ATENÇÃO:</strong> alterar o tamanho da fila limpa a fila de DMA.</p>
+</article>
+<article class="fn" id="fn-DMA_getMaxTransferSize">
+<h4><code>u16 DMA_getMaxTransferSize(void)</code></h4>
+<p>Retorna o tamanho máximo permitido (em bytes) para transferir por chamada de <code>DMA_flushQueue()</code>.</p>
+<p class="returns"><strong>Retorna:</strong> limite em bytes; 0 significa sem limite de DMA.</p>
+</article>
+<article class="fn" id="fn-DMA_setMaxTransferSize">
+<h4><code>void DMA_setMaxTransferSize(u16 value)</code></h4>
+<p>Define a quantidade máxima de dados (em bytes) a transferir por chamada de <code>DMA_flushQueue()</code>. O período de VBlank permite transferir até 7,2 KB em NTSC e 15 KB em PAL. Por padrão não há limite (0).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Quantidade máxima de dados (bytes) por flush; use <b>0</b> para sem limite.</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_setMaxTransferSizeToDefault">
+<h4><code>void DMA_setMaxTransferSizeToDefault(void)</code></h4>
+<p>Restaura a quantidade máxima de dados por flush para o valor padrão (7,2 KB em NTSC e 15 KB em PAL).</p>
+</article>
+<article class="fn" id="fn-DMA_getBufferSize">
+<h4><code>u16 DMA_getBufferSize(void)</code></h4>
+<p>Retorna o tamanho (em bytes) do buffer de dados temporário usado para armazenar dados que serão transferidos pela fila de DMA.</p>
+<p class="returns"><strong>Retorna:</strong> tamanho do buffer temporário em bytes.</p>
+</article>
+<article class="fn" id="fn-DMA_setBufferSize">
+<h4><code>void DMA_setBufferSize(u16 value)</code></h4>
+<p>Define o tamanho (em bytes) do buffer de dados temporário da fila de DMA.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Tamanho do buffer temporário em bytes (mínimo permitido = 2048, exigido pelos métodos internos).</td></tr></table>
+<p class="note"><strong>ATENÇÃO:</strong> alterar o tamanho do buffer limpa a fila de DMA.</p>
+</article>
+<article class="fn" id="fn-DMA_setBufferSizeToDefault">
+<h4><code>void DMA_setBufferSizeToDefault(void)</code></h4>
+<p>Restaura o tamanho do buffer temporário para o valor padrão (8 KB em NTSC e 14 KB em PAL).</p>
+</article>
+<article class="fn" id="fn-DMA_getIgnoreOverCapacity">
+<h4><code>bool DMA_getIgnoreOverCapacity(void)</code></h4>
+<p>Consulta a estratégia de "sobrecapacidade" da fila de DMA.</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> significa que operações de DMA futuras são ignoradas ao atingir a capacidade máxima (ver <code>DMA_setIgnoreOverCapacity()</code>).</p>
+</article>
+<article class="fn" id="fn-DMA_setIgnoreOverCapacity">
+<h4><code>void DMA_setIgnoreOverCapacity(bool value)</code></h4>
+<p>Define a estratégia de "sobrecapacidade" da fila de DMA (padrão é <code>FALSE</code>). Com <code>TRUE</code>, qualquer operação enfileirada após atingir a capacidade máxima de transferência definida em <code>DMA_setMaxTransferSize()</code> é ignorada. Com <code>FALSE</code>, todas as operações são executadas mesmo acima da capacidade (o que pode gerar slowdowns importantes).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td><code>TRUE</code> para ignorar operações acima da capacidade; <code>FALSE</code> para executar tudo.</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_clearQueue">
+<h4><code>void DMA_clearQueue(void)</code></h4>
+<p>Limpa a fila de DMA (todas as operações enfileiradas são perdidas).</p>
+</article>
+<article class="fn" id="fn-DMA_flushQueue">
+<h4><code>void DMA_flushQueue(void)</code></h4>
+<p>Transfere o conteúdo da fila de DMA para o VDP: cada operação pendente é enviada e processada o mais rápido possível. O método retorna quando todas as operações da fila foram transferidas (ou quando a capacidade máxima foi atingida).</p>
+<p class="note">Este método é chamado automaticamente no VBlank; você não deveria chamá-lo manualmente, exceto se quiser processar a fila antes do VBlank (por exemplo, se você estende o período de blank manualmente com H-Int) — nesse caso desabilite o auto-flush com <code>DMA_setAutoFlush(FALSE)</code>.</p>
+</article>
+<article class="fn" id="fn-DMA_getQueueSize">
+<h4><code>u16 DMA_getQueueSize(void)</code></h4>
+<p>Retorna o número de transferências atualmente pendentes na fila de DMA.</p>
+<p class="returns"><strong>Retorna:</strong> número de operações pendentes.</p>
+</article>
+<article class="fn" id="fn-DMA_getQueueTransferSize">
+<h4><code>u16 DMA_getQueueTransferSize(void)</code></h4>
+<p>Retorna o tamanho (em bytes) dos dados a transferir atualmente presentes na fila de DMA. Um quadro NTSC permite transferir cerca de 7,6 KB durante o VBlank (em H40), enquanto um quadro PAL permite cerca de 17 KB (em H40).</p>
+<p class="returns"><strong>Retorna:</strong> total de bytes pendentes na fila.</p>
+</article>
+<article class="fn" id="fn-DMA_allocateTemp">
+<h4><code>void* DMA_allocateTemp(u16 len)</code></h4>
+<p>Método utilitário para alocar memória do buffer temporário de DMA quando você precisa de um buffer muito temporário. Não esqueça de liberar a memória com <code>DMA_releaseTemp()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>len</code></td><td>Número de words a alocar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o buffer alocado, ou <code>NULL</code> se o buffer está cheio (ou não é grande o suficiente).</p>
+<p class="note"><strong>ATENÇÃO:</strong> é muito importante desabilitar as interrupções enquanto usa o buffer temporário de DMA, pois ele pode ser descarregado (flush) durante uma interrupção.</p>
+</article>
+<article class="fn" id="fn-DMA_releaseTemp">
+<h4><code>void DMA_releaseTemp(u16 len)</code></h4>
+<p>Libera memória previamente alocada com <code>DMA_allocateTemp()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>len</code></td><td>Número de words a liberar.</td></tr></table>
+<p class="note"><strong>ATENÇÃO:</strong> desabilite as interrupções enquanto usa o buffer temporário de DMA (pode haver flush em interrupção).</p>
+</article>
+<article class="fn" id="fn-DMA_transfer">
+<h4><code>bool DMA_transfer(TransferMethod tm, u8 location, void* from, u16 to, u16 len, u16 step)</code></h4>
+<p>Método geral para transferir dados para a memória do VDP, escolhendo o método de transferência.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr>
+<tr><td><code>location</code></td><td>Destino: <code>DMA_VRAM</code>, <code>DMA_CRAM</code> ou <code>DMA_VSRAM</code>.</td></tr>
+<tr><td><code>from</code></td><td>Buffer de origem.</td></tr>
+<tr><td><code>to</code></td><td>Endereço de destino em VRAM/CRAM/VSRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de words a transferir.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de destino após cada escrita (0 a 255); use 2 para cópia normal.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se a operação teve sucesso, <code>FALSE</code> caso contrário (buffer ou fila cheios).</p>
+</article>
+<article class="fn" id="fn-DMA_canQueue">
+<h4><code>bool DMA_canQueue(u8 location, u16 len)</code></h4>
+<p>Verifica se há capacidade de DMA suficiente para transferir o bloco de dados de tamanho dado (ver <code>DMA_setMaxTransferSize()</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>location</code></td><td>Destino: <code>DMA_VRAM</code>, <code>DMA_CRAM</code> ou <code>DMA_VSRAM</code>.</td></tr>
+<tr><td><code>len</code></td><td>Número de words que se deseja transferir.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se há capacidade suficiente, <code>FALSE</code> caso contrário.</p>
+</article>
+<article class="fn" id="fn-DMA_allocateAndQueueDma">
+<h4><code>void* DMA_allocateAndQueueDma(u8 location, u16 to, u16 len, u16 step)</code></h4>
+<p>Aloca memória temporária e enfileira a operação de transferência na fila de DMA. A ideia da fila é disparar todas as operações de DMA em rajada durante o VBlank para maximizar o uso de banda.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>location</code></td><td>Destino: <code>DMA_VRAM</code>, <code>DMA_CRAM</code> ou <code>DMA_VSRAM</code>.</td></tr>
+<tr><td><code>to</code></td><td>Endereço de destino em VRAM/CRAM/VSRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de words a alocar e transferir.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de destino (0 a 255); use 2 para cópia normal.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o ponteiro do buffer de origem que será usado na transferência (para você preencher o conteúdo); <code>NULL</code> se o buffer está cheio ou se a fila está cheia.</p>
+<p class="note"><strong>IMPORTANTE:</strong> você precisa preencher o buffer retornado antes que o DMA ocorra — é boa prática desabilitar as interrupções antes de chamar este método e reabilitá-las <em>depois</em> de preencher o buffer, evitando um flush da fila no meio do caminho.</p>
+</article>
+<article class="fn" id="fn-DMA_copyAndQueueDma">
+<h4><code>bool DMA_copyAndQueueDma(u8 location, void* from, u16 to, u16 len, u16 step)</code></h4>
+<p>Igual a <code>DMA_queueDma()</code>, exceto que primeiro copia os dados para um buffer temporário antes de enfileirar. Útil quando os dados de origem podem ser modificados antes do DMA de fato ocorrer.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>location</code></td><td>Destino: <code>DMA_VRAM</code>, <code>DMA_CRAM</code> ou <code>DMA_VSRAM</code>.</td></tr>
+<tr><td><code>from</code></td><td>Buffer de origem.</td></tr>
+<tr><td><code>to</code></td><td>Endereço de destino em VRAM/CRAM/VSRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de words a transferir.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de destino (0 a 255); use 2 para cópia normal.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se a operação falhou (fila cheia).</p>
+</article>
+<article class="fn" id="fn-DMA_queueDma">
+<h4><code>bool DMA_queueDma(u8 location, void* from, u16 to, u16 len, u16 step)</code></h4>
+<p>Enfileira a operação de transferência DMA especificada na fila de DMA, para ser disparada em rajada no VBlank e maximizar o uso de banda.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>location</code></td><td>Destino: <code>DMA_VRAM</code>, <code>DMA_CRAM</code> ou <code>DMA_VSRAM</code>.</td></tr>
+<tr><td><code>from</code></td><td>Endereço do buffer de origem.</td></tr>
+<tr><td><code>to</code></td><td>Endereço de destino em VRAM/CRAM/VSRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de words a transferir.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de destino (0 a 255); use 2 para cópia normal.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se a operação falhou (fila cheia).</p>
+</article>
+<article class="fn" id="fn-DMA_queueDmaFast">
+<h4><code>bool DMA_queueDmaFast(u8 location, void* from, u16 to, u16 len, u16 step)</code></h4>
+<p>Igual a <code>DMA_queueDma()</code>, exceto que não verifica o cruzamento de banco de 128 KB na origem (mais rápido, use quando tiver certeza de que a origem não cruza um limite de 128 KB).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>location</code></td><td>Destino: <code>DMA_VRAM</code>, <code>DMA_CRAM</code> ou <code>DMA_VSRAM</code>.</td></tr>
+<tr><td><code>from</code></td><td>Endereço do buffer de origem.</td></tr>
+<tr><td><code>to</code></td><td>Endereço de destino em VRAM/CRAM/VSRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de words a transferir.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de destino (0 a 255).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se a operação falhou (fila cheia).</p>
+</article>
+<article class="fn" id="fn-DMA_doDma">
+<h4><code>void DMA_doDma(u8 location, void* from, u16 to, u16 len, s16 step)</code></h4>
+<p>Executa a operação de transferência DMA imediatamente (sem passar pela fila).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>location</code></td><td>Destino: <code>DMA_VRAM</code>, <code>DMA_CRAM</code> ou <code>DMA_VSRAM</code>.</td></tr>
+<tr><td><code>from</code></td><td>Endereço do buffer de origem.</td></tr>
+<tr><td><code>to</code></td><td>Endereço de destino em VRAM/CRAM/VSRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de words a transferir.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de destino após cada escrita (-1 para manter o passo atual); use 2 para cópia normal.</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_doDmaFast">
+<h4><code>void DMA_doDmaFast(u8 location, void* from, u16 to, u16 len, s16 step)</code></h4>
+<p>Igual a <code>DMA_doDma()</code>, exceto que não verifica o cruzamento de banco de 128 KB na origem.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>location</code></td><td>Destino: <code>DMA_VRAM</code>, <code>DMA_CRAM</code> ou <code>DMA_VSRAM</code>.</td></tr>
+<tr><td><code>from</code></td><td>Endereço do buffer de origem.</td></tr>
+<tr><td><code>to</code></td><td>Endereço de destino em VRAM/CRAM/VSRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de words a transferir.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de destino (-1 para manter o passo atual).</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_doCPUCopy">
+<h4><code>void DMA_doCPUCopy(u8 location, void* from, u16 to, u16 len, s16 step)</code></h4>
+<p>Faz cópia por software (CPU) para a memória do VDP — principalmente para fins de teste, pois é mais lenta que usar DMA.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>location</code></td><td>Destino: <code>DMA_VRAM</code>, <code>DMA_CRAM</code> ou <code>DMA_VSRAM</code>.</td></tr>
+<tr><td><code>from</code></td><td>Buffer de origem.</td></tr>
+<tr><td><code>to</code></td><td>Endereço de destino em VRAM/CRAM/VSRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de words a transferir.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de destino (-1 para manter o passo atual); use 2 para cópia normal.</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_doCPUCopyDirect">
+<h4><code>void DMA_doCPUCopyDirect(u32 cmd, void* from, u16 len, s16 step)</code></h4>
+<p>Faz cópia por software (CPU) para a memória do VDP usando um comando de controle do VDP já empacotado (operação + endereço de destino). Também voltada principalmente para testes.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>cmd</code></td><td>Comando de controle do VDP empacotado (contém a operação e o endereço de destino).</td></tr>
+<tr><td><code>from</code></td><td>Buffer de origem.</td></tr>
+<tr><td><code>len</code></td><td>Número de words a transferir.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de destino (-1 para manter o passo atual).</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_doVRamFill">
+<h4><code>void DMA_doVRamFill(u16 to, u16 len, u8 value, s16 step)</code></h4>
+<p>Executa uma operação de preenchimento (fill) da VRAM via DMA.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>to</code></td><td>Endereço de destino na VRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de bytes a preencher (mínimo de 2 para destino em endereço par e 3 para endereço ímpar). O valor 0 significa 0x10000.</td></tr>
+<tr><td><code>value</code></td><td>Valor de preenchimento (byte).</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de VRAM após cada escrita (-1 para manter o passo atual); deve ser 1 para um fill clássico.</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_doVRamCopy">
+<h4><code>void DMA_doVRamCopy(u16 from, u16 to, u16 len, s16 step)</code></h4>
+<p>Executa uma operação de cópia VRAM → VRAM via DMA.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>from</code></td><td>Endereço de origem na VRAM.</td></tr>
+<tr><td><code>to</code></td><td>Endereço de destino na VRAM.</td></tr>
+<tr><td><code>len</code></td><td>Número de bytes a copiar.</td></tr>
+<tr><td><code>step</code></td><td>Passo de incremento do endereço de VRAM após cada escrita (-1 para manter o passo atual); deve ser 1 para uma cópia clássica.</td></tr></table>
+</article>
+<article class="fn" id="fn-DMA_waitCompletion">
+<h4><code>void DMA_waitCompletion(void)</code></h4>
+<p>Espera a conclusão da operação atual de fill/copy por DMA (mesmo efeito que <code>VDP_waitDMACompletion()</code>).</p>
+</article>
+</section>
+<section class="module" id="mod-timer">
+<h2>timer.h <span class="subtitle">Temporizadores e medição de tempo</span></h2>
+<p class="mod-desc">Fornece funções básicas de temporização (muito úteis para profiling): contagem de ticks e subticks desde o reset do console, tempo decorrido, 16 temporizadores internos independentes e funções de espera passiva (por subticks, ticks ou milissegundos). Esta unidade usa a V-Int para contar quadros — desabilitar a V-Int faz com que os métodos de timer parem de funcionar.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>SUBTICKPERSECOND</code></td><td><code>76800</code></td><td>Número de subticks por segundo.</td></tr>
+<tr><td><code>TICKPERSECOND</code></td><td><code>300</code></td><td>Número de ticks por segundo.</td></tr>
+<tr><td><code>TIMEPERSECOND</code></td><td><code>256</code></td><td>Subdivisões de tempo por segundo (base do <code>getTime</code>).</td></tr>
+<tr><td><code>MAXTIMER</code></td><td><code>16</code></td><td>Número máximo de temporizadores internos.</td></tr>
+<tr><td><code>vtimer</code></td><td><code>vu32</code></td><td>Variável global: contador de quadros mantido pela V-Int.</td></tr>
+</table>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-getSubTick">
+<h4><code>u32 getSubTick(void)</code></h4>
+<p>Retorna os subticks decorridos desde o reset do console (base de 1/76800 segundo).</p>
+<p class="returns"><strong>Retorna:</strong> subticks decorridos desde o reset.</p>
+<p class="note"><strong>ATENÇÃO:</strong> esta função não é precisa durante o VBlank (retorna um valor fixo durante todo o VBlank), para evitar problemas com o rollback do VCounter nesse período.</p>
+</article>
+<article class="fn" id="fn-getTick">
+<h4><code>u32 getTick(void)</code></h4>
+<p>Retorna os ticks decorridos desde o reset do console (base de 1/300 segundo).</p>
+<p class="returns"><strong>Retorna:</strong> ticks decorridos desde o reset.</p>
+</article>
+<article class="fn" id="fn-getTime">
+<h4><code>u32 getTime(u16 fromTick)</code></h4>
+<p>Retorna o tempo decorrido desde o reset do console (base de 1/256 segundo).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fromTick</code></td><td>Escolhe o cálculo por tick ou por subtick (mais preciso).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> tempo decorrido em unidades de 1/256 segundo.</p>
+</article>
+<article class="fn" id="fn-getTimeAsFix32">
+<h4><code>fix32 getTimeAsFix32(u16 fromTick)</code></h4>
+<p>Retorna o tempo decorrido em segundos desde o reset do console, em formato de ponto fixo <code>fix32</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fromTick</code></td><td>Escolhe o cálculo por tick ou por subtick (mais preciso).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> tempo em segundos como <code>fix32</code>.</p>
+</article>
+<article class="fn" id="fn-startTimer">
+<h4><code>void startTimer(u16 numTimer)</code></h4>
+<p>Inicia um temporizador interno (0 &lt;= numTimer &lt; MAXTIMER).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numTimer</code></td><td>Número do temporizador (0 a MAXTIMER-1).</td></tr></table>
+</article>
+<article class="fn" id="fn-getTimer">
+<h4><code>u32 getTimer(u16 numTimer, u16 restart)</code></h4>
+<p>Retorna os subticks decorridos desde a última chamada de <code>startTimer(numTimer)</code> para o temporizador especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numTimer</code></td><td>Número do temporizador (0 a MAXTIMER-1).</td></tr>
+<tr><td><code>restart</code></td><td>Se <code>TRUE</code>, reinicia o temporizador.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> subticks decorridos desde o último <code>startTimer</code>.</p>
+</article>
+<article class="fn" id="fn-waitSubTick">
+<h4><code>void waitSubTick(u32 subtick)</code></h4>
+<p>Espera pela quantidade especificada de subticks (base de 1/76800 segundo).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>subtick</code></td><td>Número de subticks a esperar.</td></tr></table>
+<p class="note"><strong>ATENÇÃO:</strong> esta função não é precisa durante o VBlank (sempre espera até o fim do VBlank) por causa do rollback do VCounter.</p>
+</article>
+<article class="fn" id="fn-waitTick">
+<h4><code>void waitTick(u32 tick)</code></h4>
+<p>Espera pela quantidade especificada de ticks (base de 1/300 segundo).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tick</code></td><td>Número de ticks a esperar.</td></tr></table>
+<p class="note"><strong>ATENÇÃO:</strong> o timer se baseia em 5/6 ticks (PAL/NTSC), portanto use 5 ou 6 ticks como valor mínimo de espera.</p>
+</article>
+<article class="fn" id="fn-waitMs">
+<h4><code>void waitMs(u32 ms)</code></h4>
+<p>Espera pela quantidade especificada de milissegundos.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ms</code></td><td>Número de milissegundos a esperar.</td></tr></table>
+<p class="note"><strong>ATENÇÃO:</strong> um timer de ~3,33 ms é usado quando <code>ms</code> &gt;= 100.</p>
+</article>
+</section>
+<section class="module" id="mod-task">
+<h2>task.h <span class="subtitle">Tarefa de usuário (multitarefa cooperativa)</span></h2>
+<p class="mod-desc">Permite registrar uma função que executa como <em>tarefa de usuário</em> (user task), num esquema de multitarefa cooperativa com a <em>tarefa supervisora</em> (o seu laço principal). O tempo de CPU é cedido à tarefa de usuário de duas formas: quando a tarefa supervisora chama <code>TSK_userYield()</code>, a tarefa de usuário executa imediatamente até a próxima interrupção de VBlank, quando a supervisora é retomada; ou quando a supervisora chama <code>TSK_superPend()</code>, a tarefa de usuário executa até que (a) ela própria chame <code>TSK_superPost()</code> ou (b) o timeout especificado expire. Útil para aproveitar o tempo ocioso do quadro com trabalho em segundo plano (descompressão, IA, streaming...). Para o escalonador funcionar, as interrupções de VBlank precisam estar habilitadas. As funções são implementadas em <code>task.s</code> (assembly).</p>
+<h3>Funções</h3>
+<article class="fn" id="fn-TSK_init">
+<h4><code>void TSK_init()</code></h4>
+<p>Inicializa o subsistema de tarefas (reseta as variáveis internas).</p>
+</article>
+<article class="fn" id="fn-TSK_userSet">
+<h4><code>void TSK_userSet(VoidCallback *task)</code></h4>
+<p>Configura a função de callback da tarefa de usuário. Deve ser definida com um callback não nulo antes de chamar qualquer outra função <code>TSK_xxx</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>task</code></td><td>Ponteiro de função para a tarefa de usuário (ou <code>NULL</code> para desabilitar a multitarefa).</td></tr></table>
+</article>
+<article class="fn" id="fn-TSK_stop">
+<h4><code>void TSK_stop(void)</code></h4>
+<p>Para a tarefa de usuário. Tem o mesmo efeito que <code>TSK_userSet(NULL)</code>.</p>
+</article>
+<article class="fn" id="fn-TSK_userYield">
+<h4><code>void TSK_userYield(void)</code></h4>
+<p>Cede o controle da tarefa supervisora para a tarefa de usuário. A tarefa de usuário será retomada e usará todo o tempo de CPU disponível até a próxima interrupção de VBlank, que retoma a tarefa supervisora.</p>
+</article>
+<article class="fn" id="fn-TSK_superPend">
+<h4><code>bool TSK_superPend(s16 wait)</code></h4>
+<p>Bloqueia a tarefa supervisora e retoma a tarefa de usuário. A supervisora só retoma a execução quando <code>TSK_superPost()</code> for chamada pela tarefa de usuário ou quando o timeout expirar.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>wait</code></td><td>Número máximo de quadros a esperar bloqueada. Use <code>TSK_PEND_FOREVER</code> para espera infinita ou um número positivo (maior que 0) para uma quantidade específica de quadros.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>false</code> se a tarefa foi acordada pela tarefa de usuário, <code>true</code> se ocorreu timeout.</p>
+</article>
+<article class="fn" id="fn-TSK_superPost">
+<h4><code>void TSK_superPost(bool immediate)</code></h4>
+<p>Retoma uma tarefa supervisora bloqueada. Deve ser chamada a partir da tarefa de usuário.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>immediate</code></td><td>Se <code>true</code>, causa imediatamente uma troca de contexto para a tarefa supervisora; se <code>false</code>, a troca de contexto só ocorre na interrupção de VBlank.</td></tr></table>
+</article>
+</section>
+<section class="module" id="mod-task-cst">
+<h2>task_cst.h <span class="subtitle">Constantes da unidade de tarefas</span></h2>
+<p class="mod-desc">Define as constantes da unidade de tarefas (ver <code>task.h</code>). Fica em um header separado porque também é incluído pelo arquivo assembly <code>task.s</code>. Não declara funções.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>USER_STACK_LENGTH</code></td><td><code>512</code></td><td>Tamanho em bytes da pilha da tarefa de usuário (deve ser menor que <code>STACK_SIZE</code>, definido em <code>memory_base.h</code>).</td></tr>
+<tr><td><code>UTSK_REGS_LEN</code></td><td><code>15 * 4</code></td><td>Tamanho do buffer de salvamento dos registradores da tarefa de usuário.</td></tr>
+<tr><td><code>TSK_PEND_FOREVER</code></td><td><code>-1</code></td><td>Valor de timeout para esperas infinitas em <code>TSK_superPend()</code>.</td></tr>
+</table>
+</div>
+</section>
+<section class="module" id="mod-pool">
+<h2>pool.h <span class="subtitle">Pool de objetos (alocação a partir de conjunto fixo)</span></h2>
+<p class="mod-desc">Unidade de gerenciamento de alocação dinâmica de objetos a partir de um conjunto fixo, pré-alocado — o <i>Pool</i>. Ideal para entidades de jogo com quantidade máxima conhecida (balas, inimigos, partículas): a alocação e a liberação são muito rápidas (pilha de alocação), sem fragmentar o heap. Exemplo: <code>Pool* bulletPool = POOL_create(20, sizeof(Bullet));</code> e depois <code>Bullet* bullet = POOL_allocate(bulletPool);</code> (verificando <code>NULL</code>) e <code>POOL_release(bulletPool, bullet, ...)</code> ao terminar. O Pool também é muito útil para iterar rapidamente sobre os objetos alocados, combinando <code>POOL_getFirst()</code> com <code>POOL_getNumAllocated()</code>:</p>
+<pre class="code">Bullet** bullets = POOL_getFirst(bulletPool);
+u16 num = POOL_getNumAllocated(bulletPool);
+while(num--)
+{
+    Bullet* bullet = *bullets++;
+    /* faça o que precisar com o bullet */
+}</pre>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-Pool">
+<h4><code>Pool</code></h4>
+<p>Estrutura do alocador de pool de objetos.</p>
+<pre class="code">typedef struct
+{
+    void* bank;        /* dados do banco (memória dos objetos) */
+    void** allocStack; /* pilha de alocação, para alocar/liberar rapidamente */
+    void** free;       /* aponta para o primeiro objeto disponível na pilha */
+    u16 objectSize;    /* tamanho de um único objeto (em bytes) */
+    u16 size;          /* tamanho do pool (em número de objetos) */
+} Pool;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-POOL_create">
+<h4><code>Pool* POOL_create(u16 size, u16 objectSize)</code></h4>
+<p>Cria e aloca um novo alocador de pool de objetos.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>size</code></td><td>Capacidade do pool (em número de objetos).</td></tr>
+<tr><td><code>objectSize</code></td><td>Tamanho de um único objeto (normalmente <code>sizeof(Struct)</code>; sempre alinhado em 2).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo pool criado, ou <code>NULL</code> se não há memória suficiente disponível.</p>
+</article>
+<article class="fn" id="fn-POOL_destroy">
+<h4><code>void POOL_destroy(Pool* pool)</code></h4>
+<p>Libera o alocador de pool de objetos especificado (memória do banco e da pilha de alocação).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pool</code></td><td>Pool de objetos a liberar.</td></tr></table>
+</article>
+<article class="fn" id="fn-POOL_reset">
+<h4><code>void POOL_reset(Pool* pool, bool clear)</code></h4>
+<p>Reseta o alocador de pool de objetos (todos os objetos voltam a ficar disponíveis).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pool</code></td><td>Pool de objetos a resetar.</td></tr>
+<tr><td><code>clear</code></td><td>Se <code>TRUE</code>, a memória dos objetos é limpa (inicializada com 0).</td></tr></table>
+</article>
+<article class="fn" id="fn-POOL_allocate">
+<h4><code>void* POOL_allocate(Pool* pool)</code></h4>
+<p>Aloca um novo objeto do pool especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pool</code></td><td>Pool de objetos de origem.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o objeto alocado, ou <code>NULL</code> em caso de erro (não há mais objetos disponíveis ou pool inválido).</p>
+</article>
+<article class="fn" id="fn-POOL_release">
+<h4><code>void POOL_release(Pool* pool, void* object, bool maintainCoherency)</code></h4>
+<p>Devolve um objeto ao pool especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pool</code></td><td>Pool de objetos.</td></tr>
+<tr><td><code>object</code></td><td>Objeto a liberar.</td></tr>
+<tr><td><code>maintainCoherency</code></td><td><code>TRUE</code> para manter a coerência da pilha para iteração (ver <code>POOL_getFirst()</code>); <code>FALSE</code> para liberação mais rápida quando você não precisa iterar sobre os objetos pela pilha de alocação.</td></tr></table>
+</article>
+<article class="fn" id="fn-POOL_getFree">
+<h4><code>u16 POOL_getFree(Pool* pool)</code></h4>
+<p>Consulta o número de objetos livres no pool.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pool</code></td><td>Pool de objetos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> número de objetos livres no pool.</p>
+</article>
+<article class="fn" id="fn-POOL_getNumAllocated">
+<h4><code>u16 POOL_getNumAllocated(Pool* pool)</code></h4>
+<p>Consulta o número de objetos alocados no pool.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pool</code></td><td>Pool de objetos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> número de objetos alocados no pool.</p>
+</article>
+<article class="fn" id="fn-POOL_getFirst">
+<h4><code>void** POOL_getFirst(Pool* pool)</code></h4>
+<p>Obtém a posição inicial dos objetos alocados na pilha de alocação (útil para iterar sobre todos os objetos alocados, junto com <code>POOL_getNumAllocated()</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pool</code></td><td>Pool de objetos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a primeira posição de objeto alocado na pilha de alocação.</p>
+</article>
+<article class="fn" id="fn-POOL_find">
+<h4><code>s16 POOL_find(Pool* pool, void* object)</code></h4>
+<p>Procura a posição de um objeto na pilha de alocação (útil principalmente para depuração).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pool</code></td><td>Pool de objetos.</td></tr>
+<tr><td><code>object</code></td><td>Objeto cuja posição (slot) se quer obter.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a posição do objeto na pilha de alocação, ou -1 se o objeto não foi encontrado.</p>
+</article>
+</section>
+<section class="module" id="mod-config">
+<h2>config.h <span class="subtitle">Flags de compilação da biblioteca</span></h2>
+<p class="mod-desc">Arquivo de configuração básica da biblioteca SGDK: define as opções específicas de compilação. Cada flag é um <code>#define</code> avaliado em tempo de compilação — alterar qualquer uma exige recompilar a biblioteca. Elas controlam desde comportamento de hardware (parar o Z80 durante DMA ou acesso a I/O, para contornar bugs de alguns modelos de Mega Drive), passando por escolhas de engine (sprite engine legada ou nova, error handler legado ou o do MD Debugger, posição da fonte na VRAM), até a habilitação de módulos opcionais (EverDrive, FAT16, Serial, MegaWiFi, Flash Save, console TTY, Link Cable) e recursos como bank switching automático para ROMs &gt; 4 MB, uso da newlib e o logo de introdução do kit. O arquivo também contém verificações de dependência entre módulos (por exemplo, FAT16 exige EverDrive; a implementação "cross" do MegaWiFi exige o módulo Serial) que geram <code>#error</code> em combinações inválidas. Não declara funções.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>LOG_LEVEL_DISABLE</code> / <code>LOG_LEVEL_ERROR</code> / <code>LOG_LEVEL_WARNING</code> / <code>LOG_LEVEL_INFO</code></td><td><code>0</code> / <code>1</code> / <code>2</code> / <code>3</code></td><td>Níveis de log: desabilitado; apenas erros; erros e avisos; erros, avisos e informações (como alocações de memória).</td></tr>
+<tr><td><code>LIB_LOG_LEVEL</code></td><td><code>LOG_LEVEL_ERROR</code></td><td>Nível de log da biblioteca (para build de debug). Forçado para <code>LOG_LEVEL_DISABLE</code> quando <code>DEBUG == 0</code>.</td></tr>
+<tr><td><code>LIB_DEBUG</code></td><td><code>1</code> se <code>DEBUG != 0</code>, senão <code>0</code></td><td>Habilita o logging KDebug (Gens KMod) para registrar erros (como falhas de alocação de memória).</td></tr>
+<tr><td><code>HALT_Z80_ON_DMA</code></td><td><code>1</code></td><td>Força a parada (halt) do Z80 durante operações de DMA (padrão). Alguns modelos de Mega Drive precisam disso para evitar corrupção da transferência DMA, ou até leitura inválida da memória do 68000/Z80 em casos muito raros (quando o Z80 acessa o barramento principal exatamente no disparo do DMA). Só desabilite se tiver 100% de certeza de que evita esse caso (por sua conta e risco).</td></tr>
+<tr><td><code>HALT_Z80_ON_IO</code></td><td><code>1</code></td><td>Força a parada do Z80 durante acessos às portas de I/O (controles). Alguns modelos (como certos MD2) precisam disso para evitar raros bugs de corrupção do Z80.</td></tr>
+<tr><td><code>DMA_DISABLED</code></td><td><code>0</code></td><td>Com 1, desabilita completamente as transferências DMA (para testes), substituindo-as por cópia (mais lenta) via CPU.</td></tr>
+<tr><td><code>LEGACY_SPRITE_ENGINE</code></td><td><code>0</code></td><td>Com 1, usa a sprite engine antiga em vez da nova. A antiga permite acessar/alterar os índices internos de sprite do VDP (útil para multiplexação de sprites); a nova usa melhor os sprites do VDP, permitindo exibir um pouco mais de sprites na prática.</td></tr>
+<tr><td><code>LEGACY_ERROR_HANDLER</code></td><td><code>0</code></td><td>Com 1, usa a tela de erro e os vetores originais do SGDK. Com 0, usa o error handler do projeto MD Debugger, que suporta símbolos do código-fonte (perfil "debug") e backtrace — mas toma conta dos vetores de exceção e não permite registrar callbacks próprios de erro (ex.: <code>addressErrorCB</code>). Se você depende desses callbacks, use o sistema legado.</td></tr>
+<tr><td><code>LEGACY_FONT_LOCATION</code></td><td><code>1</code></td><td>Com 1, mantém o tileset da fonte na posição original da VRAM (fim do espaço de tiles). Com 0, move a fonte para o início da VRAM, liberando o espaço completo de tiles para os assets do jogo e evitando problemas de fragmentação de VRAM (ver <code>TILE_FONT_INDEX</code>).</td></tr>
+<tr><td><code>ENABLE_BANK_SWITCH</code></td><td><code>0</code></td><td>Com 1, habilita a troca automática de banco usando o mapper oficial da SEGA para ROMs &gt; 4 MB. Os dados BIN internos declarados na seção <code>.far_rodata</code> passam a ser acessados via <code>BANK_getFarData(..)</code> (mapper.c), o que pode impactar bastante a performance — por isso vem desabilitado por padrão.</td></tr>
+<tr><td><code>ENABLE_NEWLIB</code></td><td><code>0</code></td><td>Com 1, usa a newlib com o SGDK: desabilita os métodos padrão do SGDK (memset/memcpy/malloc...) substituindo-os pelas implementações da newlib.</td></tr>
+<tr><td><code>ENABLE_LOGO</code></td><td><code>0</code></td><td>Com 1, exibe o logo de introdução do kit na inicialização.</td></tr>
+<tr><td><code>ZOOMING_LOGO</code></td><td><code>0</code></td><td>Com 1 (e <code>ENABLE_LOGO</code> ativo), usa efeito de zoom no logo de introdução em vez do fade clássico.</td></tr>
+<tr><td><code>MODULE_EVERDRIVE</code></td><td><code>0</code></td><td>Com 1, habilita os métodos de programação EVERDRIVE (escritos por Krikzz).</td></tr>
+<tr><td><code>MODULE_FAT16</code></td><td><code>0</code></td><td>Com 1, habilita os métodos FAT16 para cartucho Everdrive (escritos por Krikzz). Custa um pouco mais de 1 KB de RAM. Exige <code>MODULE_EVERDRIVE</code> (senão gera <code>#error</code>).</td></tr>
+<tr><td><code>MODULE_SERIAL</code></td><td><code>0</code></td><td>Com 1, habilita o uso de PORT_2 ou PORT_EXT como porta serial COMM.</td></tr>
+<tr><td><code>MODULE_MEGAWIFI</code></td><td><code>0</code></td><td>Com 1, habilita as funções e o código de suporte MegaWiFi (escritos por Jesus Alonso — doragasu).</td></tr>
+<tr><td><code>MEGAWIFI_IMPLEMENTATION_CROSS</code> / <code>_MW_CART</code> / <code>_ED</code></td><td><code>0x01</code> / <code>0x02</code> / <code>0x04</code></td><td>Implementações MegaWiFi disponíveis: Cross (Serial), cartucho MegaWiFi e EverDrive (para testes). <code>MEGAWIFI_IMPLEMENTATION</code> define a combinação usada (padrão: <code>CROSS | ED</code>). Cuidado: habilitar MW_CART e EverDrive juntos pode causar problemas, pois ambos usam a mesma estrutura de vtable COMM. A implementação Cross exige <code>MODULE_SERIAL</code> e a ED exige <code>ENABLE_BANK_SWITCH</code> (senão geram <code>#error</code>).</td></tr>
+<tr><td><code>MODULE_FLASHSAVE</code></td><td><code>1</code></td><td>Com 1, habilita as funções de Flash Save (escritas por Jesus Alonso — doragasu). Não há razão para desabilitar, pois não consome memória extra.</td></tr>
+<tr><td><code>MODULE_CONSOLE</code></td><td><code>1</code></td><td>Com 1, habilita o módulo de console de texto TTY (escrito por Andreas Dietrich). Consome cerca de 28 bytes de memória quando habilitado.</td></tr>
+<tr><td><code>MODULE_LINK_CABLE</code></td><td><code>0</code></td><td>Com 1, habilita as funções do protocolo Link Cable (escritas por BlodTor).</td></tr>
+</table>
+</div>
+</section>

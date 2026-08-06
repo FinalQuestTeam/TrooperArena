@@ -1,0 +1,937 @@
+<section class="module" id="mod-vdp">
+<h2>vdp.h <span class="subtitle">Núcleo do VDP — inicialização, registradores, resolução e recursos de vídeo</span></h2>
+<p class="mod-desc">Este módulo fornece os métodos gerais de controle do VDP (Video Display Processor), o chip de vídeo do Mega Drive/Genesis: inicialização do subsistema, leitura e escrita de registradores, configuração de resolução, modos de scroll e interlace, posicionamento do plano Window, controle de interrupções (VInt, HInt, Ext) e utilitários de sincronização (esperar VBlank/VSync, FIFO, DMA). Também define os endereços dos ports do VDP, as flags do registrador de status, os comandos de acesso a VRAM/CRAM/VSRAM e a organização padrão de tiles na VRAM usada pelo SGDK.</p>
+<p class="mod-desc"><strong>Aviso importante:</strong> o SGDK espera que a VRAM esteja organizada com os dados de tile localizados <em>antes</em> dos tilemaps e tabelas: <code>0000-XXXX</code> = dados de tile; <code>XXXX-FFFF</code> = tilemaps e tabelas (tabela de scroll horizontal, tabela de sprites, planos B/A e plano Window). Se essa organização não for respeitada, várias facilidades do SGDK podem falhar.</p>
+
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>VDP_DATA_PORT</code></td><td><code>0xC00000</code></td><td>Endereço do port de dados do VDP (leituras/escritas em VRAM, CRAM e VSRAM passam por aqui).</td></tr>
+<tr><td><code>VDP_CTRL_PORT</code></td><td><code>0xC00004</code></td><td>Endereço do port de controle do VDP (envio de comandos e leitura do registrador de status).</td></tr>
+<tr><td><code>VDP_HVCOUNTER_PORT</code></td><td><code>0xC00008</code></td><td>Endereço do port do contador HV (posição atual do feixe: contador horizontal e vertical).</td></tr>
+<tr><td><code>VDP_FIFOEMPTY_FLAG</code></td><td><code>1 &lt;&lt; 9</code></td><td>Flag de status: FIFO de escrita do VDP vazia.</td></tr>
+<tr><td><code>VDP_FIFOFULL_FLAG</code></td><td><code>1 &lt;&lt; 8</code></td><td>Flag de status: FIFO de escrita do VDP cheia (novas escritas bloqueiam a CPU).</td></tr>
+<tr><td><code>VDP_VINTPENDING_FLAG</code></td><td><code>1 &lt;&lt; 7</code></td><td>Flag de status: interrupção vertical (VInt) pendente.</td></tr>
+<tr><td><code>VDP_SPROVERFLOW_FLAG</code></td><td><code>1 &lt;&lt; 6</code></td><td>Flag de status: estouro de sprites (mais sprites em uma scanline do que o hardware suporta).</td></tr>
+<tr><td><code>VDP_SPRCOLLISION_FLAG</code></td><td><code>1 &lt;&lt; 5</code></td><td>Flag de status: colisão entre pixels não transparentes de dois sprites.</td></tr>
+<tr><td><code>VDP_ODDFRAME_FLAG</code></td><td><code>1 &lt;&lt; 4</code></td><td>Flag de status: frame ímpar sendo exibido (relevante em modo interlaçado).</td></tr>
+<tr><td><code>VDP_VBLANK_FLAG</code></td><td><code>1 &lt;&lt; 3</code></td><td>Flag de status: período de blanking vertical (VBlank) em andamento.</td></tr>
+<tr><td><code>VDP_HBLANK_FLAG</code></td><td><code>1 &lt;&lt; 2</code></td><td>Flag de status: período de blanking horizontal (HBlank) em andamento.</td></tr>
+<tr><td><code>VDP_DMABUSY_FLAG</code></td><td><code>1 &lt;&lt; 1</code></td><td>Flag de status: operação de DMA em andamento.</td></tr>
+<tr><td><code>VDP_PALMODE_FLAG</code></td><td><code>1 &lt;&lt; 0</code></td><td>Flag de status: sistema operando em modo PAL (50 Hz).</td></tr>
+<tr><td><code>VDP_BG_A</code></td><td><code>bga_addr</code></td><td>Endereço em VRAM do tilemap do plano de fundo A.</td></tr>
+<tr><td><code>VDP_BG_B</code></td><td><code>bgb_addr</code></td><td>Endereço em VRAM do tilemap do plano de fundo B.</td></tr>
+<tr><td><code>VDP_WINDOW</code></td><td><code>window_addr</code></td><td>Endereço em VRAM do tilemap do plano Window.</td></tr>
+<tr><td><code>VDP_HSCROLL_TABLE</code></td><td><code>hscrl_addr</code></td><td>Endereço em VRAM da tabela de scroll horizontal.</td></tr>
+<tr><td><code>VDP_SPRITE_TABLE</code></td><td><code>slist_addr</code></td><td>Endereço em VRAM da tabela (lista) de sprites.</td></tr>
+<tr><td><code>VDP_MAPS_START</code></td><td><code>maps_addr</code></td><td>Endereço em VRAM onde começam os tilemaps (endereço do primeiro tilemap/tabela; fim do espaço de tiles).</td></tr>
+<tr><td><code>HSCROLL_PLANE</code></td><td><code>0</code></td><td>Modo de scroll horizontal por plane (deslocamento único para o plano inteiro).</td></tr>
+<tr><td><code>HSCROLL_TILE</code></td><td><code>2</code></td><td>Modo de scroll horizontal por tile (granularidade de 8 pixels).</td></tr>
+<tr><td><code>HSCROLL_LINE</code></td><td><code>3</code></td><td>Modo de scroll horizontal por linha (granularidade de 1 pixel).</td></tr>
+<tr><td><code>VSCROLL_PLANE</code></td><td><code>0</code></td><td>Modo de scroll vertical por plane (deslocamento único para o plano inteiro).</td></tr>
+<tr><td><code>VSCROLL_COLUMN</code></td><td><code>1</code></td><td>Modo de scroll vertical por coluna de 2 tiles (blocos de 16 pixels).</td></tr>
+<tr><td><code>INTERLACED_NONE</code></td><td><code>0</code></td><td>Varredura interlaçada desabilitada (modo padrão do VDP).</td></tr>
+<tr><td><code>INTERLACED_MODE1</code></td><td><code>1</code></td><td>Modo interlaçado 1 — células de 8x8 pontos (resolução vertical normal); o mesmo padrão é exibido nas linhas adjacentes dos campos pares e ímpares.</td></tr>
+<tr><td><code>INTERLACED_MODE2</code></td><td><code>2</code></td><td>Modo interlaçado 2 — células de 8x16 pontos (resolução vertical dobrada); padrões diferentes podem ser exibidos nas linhas adjacentes dos campos pares e ímpares.</td></tr>
+<tr><td><code>FONT_LENGTH</code></td><td><code>96</code></td><td>Quantidade de caracteres (tiles) da fonte padrão do SGDK.</td></tr>
+<tr><td><code>TILE_SIZE</code></td><td><code>32</code></td><td>Tamanho de um tile em bytes (8x8 pixels em 4 bpp).</td></tr>
+<tr><td><code>TILE_INDEX_MASK</code></td><td><code>0xFFFF / TILE_SIZE</code></td><td>Máscara para extrair o índice de tile de um valor de atributo.</td></tr>
+<tr><td><code>TILE_SPACE</code></td><td><code>VDP_MAPS_START</code></td><td>Espaço em bytes reservado para tiles na VRAM (o espaço de tiles termina onde começam os tilemaps).</td></tr>
+<tr><td><code>TILE_MAX_NUM</code></td><td><code>TILE_SPACE / TILE_SIZE</code></td><td>Número máximo de tiles na VRAM (derivado de <code>TILE_SPACE</code>).</td></tr>
+<tr><td><code>TILE_MAX_INDEX</code></td><td><code>TILE_MAX_NUM - 1</code></td><td>Índice máximo de tile na VRAM.</td></tr>
+<tr><td><code>TILE_SYSTEM_INDEX</code></td><td><code>0x0000</code></td><td>Índice base dos tiles de sistema na VRAM.</td></tr>
+<tr><td><code>TILE_SYSTEM_LENGTH</code></td><td><code>16</code></td><td>Quantidade de tiles de sistema.</td></tr>
+<tr><td><code>TILE_USER_INDEX</code></td><td><em>depende de <code>LEGACY_FONT_LOCATION</code></em></td><td>Índice base dos tiles do usuário (após os tiles de sistema e, no layout padrão, após a fonte).</td></tr>
+<tr><td><code>TILE_FONT_INDEX</code></td><td><em>depende de <code>LEGACY_FONT_LOCATION</code></em></td><td>Índice base dos tiles da fonte (logo após os tiles de sistema no layout padrão; no fim do espaço de tiles no layout legado).</td></tr>
+<tr><td><code>TILE_SPRITE_INDEX</code></td><td><em>calculado</em></td><td>Índice base dos tiles do motor de sprites (alocado no fim do espaço de tiles, com tamanho <code>spriteVramSize</code>).</td></tr>
+<tr><td><code>TILE_USER_LENGTH</code></td><td><code>(userTileMaxIndex - TILE_USER_INDEX) + 1</code></td><td>Quantidade de tiles disponíveis para o usuário.</td></tr>
+<tr><td><code>TILE_USER_MAX_INDEX</code></td><td><code>userTileMaxIndex</code></td><td>Índice máximo de tile na VRAM reservado ao usuário (backgrounds e sprites gerenciados manualmente).</td></tr>
+<tr><td><code>TILE_SYSTEM</code> / <code>TILE_USER</code> / <code>TILE_FONT</code></td><td><code>índice * TILE_SIZE</code></td><td>Endereços em VRAM (em bytes) dos tiles de sistema, do usuário e da fonte, respectivamente.</td></tr>
+<tr><td><code>PAL0</code> .. <code>PAL3</code></td><td><code>0</code> .. <code>3</code></td><td>Índices das 4 palettes de 16 cores armazenadas na CRAM.</td></tr>
+<tr><td><code>GFX_*</code>, <code>VDP_PLAN_A/B/WINDOW</code>, <code>VSCROLL_2TILE</code>, <code>FONT_LEN</code>, <code>TILE_MAXNUM</code>, <code>TILE_MAXINDEX</code>, <code>TILE_SYSTEM*</code> (grafias antigas), <code>TILE_USERINDEX</code>, <code>TILE_FONTINDEX</code>, <code>TILE_SPRITEINDEX</code>, <code>TILE_USERLENGTH</code>, <code>TILE_USERMAXINDEX</code>, <code>VDP_setPlanSize</code>, <code>VDP_getAPlanAddress</code>, <code>VDP_getBPlanAddress</code>, <code>VDP_getWindowPlanAddress</code>, <code>VDP_setAPlanAddress</code>, <code>VDP_setBPlanAddress</code>, <code>VDP_setWindowPlanAddress</code></td><td><em>obsoletos</em></td><td>Família de definições descontinuadas mantidas apenas para diagnóstico: expandem para <code>_Pragma("GCC error ...")</code>, gerando erro de compilação com a indicação do substituto moderno (<code>VDP_*</code>, <code>TILE_*</code> nas grafias atuais).</td></tr>
+</table>
+</div>
+
+<div class="defines">
+<h3>Variáveis globais</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>bga_addr</code>, <code>bgb_addr</code>, <code>window_addr</code>, <code>hscrl_addr</code>, <code>slist_addr</code>, <code>maps_addr</code>, <code>userTileMaxIndex</code></td><td><code>u16</code></td><td>Endereços/índices atuais das estruturas em VRAM; usados internamente pelas macros <code>VDP_BG_A</code>, <code>VDP_BG_B</code>, <code>VDP_WINDOW</code>, <code>VDP_HSCROLL_TABLE</code>, <code>VDP_SPRITE_TABLE</code>, <code>VDP_MAPS_START</code> e <code>TILE_USER_MAX_INDEX</code>. Prefira as macros e as funções <code>VDP_get/set*Address()</code>.</td></tr>
+<tr><td><code>screenWidth</code> / <code>screenHeight</code></td><td><code>u16</code></td><td>Resolução horizontal (320 ou 256) e vertical (224 ou 240) atual da tela, em pixels.</td></tr>
+<tr><td><code>planeWidth</code> / <code>planeHeight</code></td><td><code>u16</code></td><td>Largura e altura atuais dos planes de fundo, em tiles. Valores possíveis: 32, 64, 128.</td></tr>
+<tr><td><code>windowWidth</code></td><td><code>u16</code></td><td>Largura atual do plano Window, em tiles. Valores possíveis: 32, 64.</td></tr>
+<tr><td><code>planeWidthSft</code> / <code>planeHeightSft</code></td><td><code>u16</code></td><td>Deslocamento de bits (shift) correspondente à largura/altura do plane: 5, 6 ou 7 (para 32, 64 e 128).</td></tr>
+<tr><td><code>windowWidthSft</code></td><td><code>u16</code></td><td>Deslocamento de bits da largura do Window: 5 ou 6 (para 32 ou 64).</td></tr>
+</table>
+</div>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-VDPPlane">
+<h4><code>VDPPlane</code></h4>
+<p>Enumeração usada por diversos métodos para indicar sobre qual plane a operação deve atuar: plano de fundo A, plano de fundo B ou plano Window.</p>
+<pre class="code">typedef enum
+{
+    BG_A = 0,    // plano de fundo A
+    BG_B = 1,    // plano de fundo B
+    WINDOW = 2   // plano Window (sem scroll, sobrepõe o plano A)
+} VDPPlane;</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-VDP_READ_VRAM_ADDR">
+<h4><code>#define VDP_READ_VRAM_ADDR(adr)</code></h4>
+<p>Monta o comando de 32 bits do VDP para ler a partir do endereço de VRAM especificado. O valor resultante deve ser escrito no port de controle antes de ler o port de dados.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço em VRAM (0 a 0xFFFF).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits pronto para ser escrito no port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_READ_CRAM_ADDR">
+<h4><code>#define VDP_READ_CRAM_ADDR(adr)</code></h4>
+<p>Monta o comando do VDP para ler a partir do endereço de CRAM (memória de cores) especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço em CRAM (0 a 0x7F — 64 entradas de cor de 2 bytes).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_READ_VSRAM_ADDR">
+<h4><code>#define VDP_READ_VSRAM_ADDR(adr)</code></h4>
+<p>Monta o comando do VDP para ler a partir do endereço de VSRAM (memória de scroll vertical) especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço em VSRAM (0 a 0x7F).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_WRITE_VRAM_ADDR">
+<h4><code>#define VDP_WRITE_VRAM_ADDR(adr)</code></h4>
+<p>Monta o comando do VDP para escrever no endereço de VRAM especificado. Após escrever o comando no port de controle, os dados escritos no port de dados vão para a VRAM (com auto-incremento configurado por <code>VDP_setAutoInc()</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço em VRAM (0 a 0xFFFF).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_WRITE_CRAM_ADDR">
+<h4><code>#define VDP_WRITE_CRAM_ADDR(adr)</code></h4>
+<p>Monta o comando do VDP para escrever no endereço de CRAM especificado (atualização de cores das palettes).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço em CRAM (0 a 0x7F).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_WRITE_VSRAM_ADDR">
+<h4><code>#define VDP_WRITE_VSRAM_ADDR(adr)</code></h4>
+<p>Monta o comando do VDP para escrever no endereço de VSRAM especificado (valores de scroll vertical).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço em VSRAM (0 a 0x7F).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_DMA_VRAM_ADDR">
+<h4><code>#define VDP_DMA_VRAM_ADDR(adr)</code></h4>
+<p>Monta o comando do VDP para disparar uma transferência DMA com destino no endereço de VRAM especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço de destino em VRAM.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP (com bit de DMA ativado).</p>
+<p class="note">Os registradores de origem, tamanho e modo do DMA devem estar configurados antes de escrever este comando. Em geral, prefira a API de mais alto nível do módulo DMA do SGDK.</p>
+</article>
+
+<article class="fn" id="fn-VDP_DMA_CRAM_ADDR">
+<h4><code>#define VDP_DMA_CRAM_ADDR(adr)</code></h4>
+<p>Monta o comando do VDP para disparar uma transferência DMA com destino no endereço de CRAM especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço de destino em CRAM.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_DMA_VSRAM_ADDR">
+<h4><code>#define VDP_DMA_VSRAM_ADDR(adr)</code></h4>
+<p>Monta o comando do VDP para disparar uma transferência DMA com destino no endereço de VSRAM especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço de destino em VSRAM.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_DMA_VRAMCOPY_ADDR">
+<h4><code>#define VDP_DMA_VRAMCOPY_ADDR(adr)</code></h4>
+<p>Monta o comando do VDP para disparar uma cópia DMA de VRAM para VRAM (operação VRAM copy) com destino no endereço especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Endereço de destino em VRAM.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_VERT_SCROLL">
+<h4><code>#define VDP_VERT_SCROLL(adr)</code></h4>
+<p>Atalho para escrever na tabela de scroll vertical — equivalente a <code>VDP_WRITE_VSRAM_ADDR(adr)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Deslocamento dentro da VSRAM.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+</article>
+
+<article class="fn" id="fn-VDP_HORZ_SCROLL">
+<h4><code>#define VDP_HORZ_SCROLL(adr)</code></h4>
+<p>Atalho para escrever na tabela de scroll horizontal em VRAM — equivalente a <code>VDP_WRITE_VRAM_ADDR(VDP_HSCROLL_TABLE + adr)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>adr</code></td><td>Deslocamento dentro da tabela de scroll horizontal.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comando de 32 bits para o port de controle do VDP.</p>
+<p class="note">No header o texto original menciona <code>VDP_SCROLL_H</code>; a implementação usa o endereço atual da tabela de scroll horizontal (<code>hscrl_addr</code>).</p>
+</article>
+
+<article class="fn" id="fn-GET_VDP_STATUS">
+<h4><code>#define GET_VDP_STATUS(flag)</code></h4>
+<p>Testa o registrador de status do VDP contra a flag especificada (ver constantes <code>VDP_XXX_FLAG</code>). Lê diretamente o port de controle.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>flag</code></td><td>Flag (ou combinação de flags) a testar, ex.: <code>VDP_VBLANK_FLAG</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor diferente de zero se a(s) flag(s) estiver(em) ativa(s).</p>
+</article>
+
+<article class="fn" id="fn-IS_PAL_SYSTEM">
+<h4><code>#define IS_PAL_SYSTEM</code></h4>
+<p>Testa se o sistema atual é PAL (50 Hz), consultando a flag <code>VDP_PALMODE_FLAG</code> do registrador de status.</p>
+<p class="returns"><strong>Retorna:</strong> valor diferente de zero em sistema PAL; zero em sistema NTSC (60 Hz).</p>
+</article>
+
+<article class="fn" id="fn-GET_HVCOUNTER">
+<h4><code>#define GET_HVCOUNTER</code></h4>
+<p>Lê o contador HV do VDP (port <code>VDP_HVCOUNTER_PORT</code>): o byte alto contém o contador vertical e o byte baixo o contador horizontal.</p>
+<p class="returns"><strong>Retorna:</strong> valor de 16 bits do contador HV.</p>
+</article>
+
+<article class="fn" id="fn-GET_HCOUNTER">
+<h4><code>#define GET_HCOUNTER</code></h4>
+<p>Extrai apenas o contador horizontal do contador HV.</p>
+<p class="returns"><strong>Retorna:</strong> contador horizontal (byte baixo do HV counter).</p>
+</article>
+
+<article class="fn" id="fn-GET_VCOUNTER">
+<h4><code>#define GET_VCOUNTER</code></h4>
+<p>Extrai apenas o contador vertical do contador HV.</p>
+<p class="returns"><strong>Retorna:</strong> contador vertical (byte alto do HV counter).</p>
+<p class="note">O V-Counter bruto "retrocede" (rollback) durante o VBlank; para uma leitura linearizada use <code>VDP_getAdjustedVCounter()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_init">
+<h4><code>void VDP_init(void)</code></h4>
+<p>Inicializa todo o subsistema do VDP: restaura os registradores do VDP aos valores padrão, reinicializa os sprites e chama <code>VDP_resetScreen()</code> para reinicializar os planos de fundo e as palettes.</p>
+</article>
+
+<article class="fn" id="fn-VDP_resetScreen">
+<h4><code>void VDP_resetScreen(void)</code></h4>
+<p>Reinicializa os planos de fundo e as palettes: limpa a VRAM (apaga os planes e recarrega a fonte), zera os scrolls e restaura as palettes padrão (rampas de cinza, vermelho, verde e azul).</p>
+</article>
+
+<article class="fn" id="fn-VDP_getReg">
+<h4><code>u8 VDP_getReg(u16 reg)</code></h4>
+<p>Obtém o valor de um registrador do VDP. Como os registradores do VDP não podem ser lidos pelo hardware, o SGDK mantém uma cópia (cache) em RAM dos valores escritos.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>reg</code></td><td>Número do registrador cujo valor se deseja obter.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor do registrador especificado (segundo o cache do SGDK).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setReg">
+<h4><code>void VDP_setReg(u16 reg, u8 value)</code></h4>
+<p>Escreve um valor em um registrador do VDP.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>reg</code></td><td>Número do registrador. Ativar o bit 7 do número (<code>reg | 0x80</code>) faz a escrita ir direto ao VDP sem atualizar o cache do SGDK, de modo que <code>VDP_getReg(reg)</code> continuará retornando o valor anterior.</td></tr>
+<tr><td><code>value</code></td><td>Valor a escrever.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_getEnable">
+<h4><code>bool VDP_getEnable(void)</code></h4>
+<p>Retorna o estado de habilitação do display do VDP.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se o display está habilitado.</p>
+</article>
+
+<article class="fn" id="fn-VDP_isEnable">
+<h4><code>bool VDP_isEnable(void)</code></h4>
+<p>Retorna o estado de habilitação do display do VDP (idêntico a <code>VDP_getEnable()</code>, apenas outro nome).</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se o display está habilitado.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setEnable">
+<h4><code>void VDP_setEnable(bool value)</code></h4>
+<p>Habilita ou desabilita o display do VDP. Desabilitar temporariamente o display acelera as transferências para a memória de vídeo, pois o VDP deixa de disputar o acesso à VRAM com a renderização.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>TRUE para habilitar o display, FALSE para desabilitar (tela exibe apenas a cor de fundo).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_getScanlineNumber">
+<h4><code>u16 VDP_getScanlineNumber(void)</code></h4>
+<p>Retorna o número total de scanlines do sistema.</p>
+<p class="returns"><strong>Retorna:</strong> 312 em sistema PAL e 262 em sistema NTSC.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getScreenHeight">
+<h4><code>u16 VDP_getScreenHeight(void)</code></h4>
+<p>Retorna a resolução vertical atual da tela.</p>
+<p class="returns"><strong>Retorna:</strong> sempre 224 em NTSC (único modo suportado); em PAL pode retornar 240 se o modo de 240 linhas estiver ativo.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setScreenHeight224">
+<h4><code>void VDP_setScreenHeight224(void)</code></h4>
+<p>Define a resolução vertical em 224 pixels (28 tiles). É o único modo aceito em sistemas NTSC.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setScreenHeight240">
+<h4><code>void VDP_setScreenHeight240(void)</code></h4>
+<p>Define a resolução vertical em 240 pixels (30 tiles).</p>
+<p class="note">Funciona apenas em sistemas PAL.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getScreenWidth">
+<h4><code>u16 VDP_getScreenWidth(void)</code></h4>
+<p>Retorna a resolução horizontal atual da tela.</p>
+<p class="returns"><strong>Retorna:</strong> 320 (modo H40) ou 256 (modo H32), conforme o modo horizontal ativo.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setScreenWidth256">
+<h4><code>void VDP_setScreenWidth256(void)</code></h4>
+<p>Define a resolução horizontal em 256 pixels (modo H32, 32 tiles de largura visível).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setScreenWidth320">
+<h4><code>void VDP_setScreenWidth320(void)</code></h4>
+<p>Define a resolução horizontal em 320 pixels (modo H40, 40 tiles de largura visível — modo padrão).</p>
+</article>
+
+<article class="fn" id="fn-VDP_getPlaneWidth">
+<h4><code>u16 VDP_getPlaneWidth(void)</code></h4>
+<p>Retorna a largura atual dos planes de fundo, em tiles.</p>
+<p class="returns"><strong>Retorna:</strong> 32, 64 ou 128.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getPlaneHeight">
+<h4><code>u16 VDP_getPlaneHeight(void)</code></h4>
+<p>Retorna a altura atual dos planes de fundo, em tiles.</p>
+<p class="returns"><strong>Retorna:</strong> 32, 64 ou 128.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setPlaneSize">
+<h4><code>void VDP_setPlaneSize(u16 w, u16 h, bool setupVram)</code></h4>
+<p>Define o tamanho dos planes de fundo (em tiles). Planes maiores consomem mais VRAM para os tilemaps.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>w</code></td><td>Largura em tiles. Valores possíveis: 32, 64 ou 128.</td></tr>
+<tr><td><code>h</code></td><td>Altura em tiles. Valores possíveis: 32, 64 ou 128.</td></tr>
+<tr><td><code>setupVram</code></td><td>Se TRUE, os tilemaps e tabelas são automaticamente remapeados na VRAM conforme o novo tamanho de plane. Na dúvida, mantenha TRUE.</td></tr></table>
+<p class="note">Atenção: garanta que a VRAM esteja organizada de forma que os tilemaps tenham espaço suficiente. Após a remapeação será preciso redesenhar os backgrounds, e o motor de sprites pode precisar realocar sua região de VRAM se a localização mudou. Nem toda combinação é válida no hardware (o VDP limita a área total do tilemap; por exemplo, 128x128 não é suportado).</p>
+</article>
+
+<article class="fn" id="fn-VDP_getHorizontalScrollingMode">
+<h4><code>u8 VDP_getHorizontalScrollingMode(void)</code></h4>
+<p>Retorna o modo de scroll horizontal dos planes.</p>
+<p class="returns"><strong>Retorna:</strong> <code>HSCROLL_PLANE</code>, <code>HSCROLL_TILE</code> ou <code>HSCROLL_LINE</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getVerticalScrollingMode">
+<h4><code>u8 VDP_getVerticalScrollingMode(void)</code></h4>
+<p>Retorna o modo de scroll vertical dos planes.</p>
+<p class="returns"><strong>Retorna:</strong> <code>VSCROLL_PLANE</code> ou <code>VSCROLL_COLUMN</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setScrollingMode">
+<h4><code>void VDP_setScrollingMode(u16 hscroll, u16 vscroll)</code></h4>
+<p>Define os modos de scroll dos planes de fundo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>hscroll</code></td><td>Modo de scroll horizontal: <code>HSCROLL_PLANE</code> = deslocamento aplicado ao plane inteiro; <code>HSCROLL_TILE</code> = deslocamento com granularidade de tile (blocos de 8 pixels); <code>HSCROLL_LINE</code> = deslocamento por linha (1 pixel).</td></tr>
+<tr><td><code>vscroll</code></td><td>Modo de scroll vertical: <code>VSCROLL_PLANE</code> = deslocamento aplicado ao plane inteiro; <code>VSCROLL_COLUMN</code> = deslocamento com granularidade de coluna de 2 tiles (blocos de 16 pixels).</td></tr></table>
+<p class="note">Use <code>VDP_setHorizontalScroll()</code>, <code>VDP_setHorizontalScrollTile()</code>, <code>VDP_setHorizontalScrollLine()</code>, <code>VDP_setVerticalScroll()</code> e <code>VDP_setVerticalScrollTile()</code> (em vdp_bg.h) para definir os deslocamentos de acordo com o modo ativo.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getBackgroundColor">
+<h4><code>u8 VDP_getBackgroundColor(void)</code></h4>
+<p>Retorna o índice da cor de fundo (índice na CRAM usado nas bordas e áreas transparentes da tela).</p>
+<p class="returns"><strong>Retorna:</strong> índice de cor de fundo (0 a 63).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setBackgroundColor">
+<h4><code>void VDP_setBackgroundColor(u8 value)</code></h4>
+<p>Define o índice da cor de fundo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Índice de cor na CRAM (0 a 63; palette * 16 + índice).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_getAutoInc">
+<h4><code>u8 VDP_getAutoInc(void)</code></h4>
+<p>Retorna o valor do registrador de auto-incremento (quanto o endereço interno do VDP avança após cada acesso ao port de dados).</p>
+<p class="returns"><strong>Retorna:</strong> valor atual do auto-incremento.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setAutoInc">
+<h4><code>void VDP_setAutoInc(u8 value)</code></h4>
+<p>Define o valor do registrador de auto-incremento. Normalmente 2 (uma word por acesso); valores diferentes são úteis para escritas em colunas (por exemplo, incremento igual à largura do tilemap em bytes).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Incremento em bytes aplicado após cada leitura/escrita no port de dados.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_getDMAEnabled">
+<h4><code>u8 VDP_getDMAEnabled(void)</code></h4>
+<p>Retorna o estado de habilitação do DMA no VDP.</p>
+<p class="returns"><strong>Retorna:</strong> valor diferente de zero se o DMA está habilitado.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setDMAEnabled">
+<h4><code>void VDP_setDMAEnabled(bool value)</code></h4>
+<p>Habilita ou desabilita o DMA no VDP.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>TRUE para habilitar, FALSE para desabilitar.</td></tr></table>
+<p class="note">Por padrão o SGDK mantém o DMA sempre habilitado (não há motivo prático para desabilitá-lo).</p>
+</article>
+
+<article class="fn" id="fn-VDP_getHVLatching">
+<h4><code>u8 VDP_getHVLatching(void)</code></h4>
+<p>Retorna o estado do travamento (latching) do contador HV na interrupção externa INT2 (recurso usado por light guns).</p>
+<p class="returns"><strong>Retorna:</strong> valor diferente de zero se o latching está ativo.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setHVLatching">
+<h4><code>void VDP_setHVLatching(bool value)</code></h4>
+<p>Ativa ou desativa o travamento do contador HV na INT2. Com o latching ativo, o HV Counter congela seu valor no momento da interrupção externa, permitindo posicionamento preciso de light gun.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>TRUE para ativar o latching, FALSE para desativar.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setVInterrupt">
+<h4><code>void VDP_setVInterrupt(bool value)</code></h4>
+<p>Habilita ou desabilita a interrupção vertical (VInt).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>TRUE para habilitar, FALSE para desabilitar.</td></tr></table>
+<p class="note">É <strong>fortemente</strong> recomendado manter a VInt habilitada — o SGDK depende dela para a fila de DMA, contagem de frames e diversas rotinas de sincronização.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setHInterrupt">
+<h4><code>void VDP_setHInterrupt(bool value)</code></h4>
+<p>Habilita ou desabilita a interrupção horizontal (HInt), disparada a cada N scanlines conforme <code>VDP_setHIntCounter()</code>. Útil para efeitos raster (mudança de palette, scroll ou registradores no meio do frame).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>TRUE para habilitar, FALSE para desabilitar.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setExtInterrupt">
+<h4><code>void VDP_setExtInterrupt(bool value)</code></h4>
+<p>Habilita ou desabilita a interrupção externa (INT2, gerada pelo pino TH dos controles — usada por light guns em conjunto com o HV latching).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>TRUE para habilitar, FALSE para desabilitar.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setHilightShadow">
+<h4><code>void VDP_setHilightShadow(bool value)</code></h4>
+<p>Habilita ou desabilita o efeito Hilight/Shadow (modo shadow/highlight do VDP), que permite escurecer ou clarear pixels conforme a prioridade dos tiles e sprites, simulando mais tons na tela.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>TRUE para habilitar, FALSE para desabilitar.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_getHIntCounter">
+<h4><code>u8 VDP_getHIntCounter(void)</code></h4>
+<p>Retorna o valor do contador da interrupção horizontal.</p>
+<p class="returns"><strong>Retorna:</strong> valor atual do contador de HInt.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setHIntCounter">
+<h4><code>void VDP_setHIntCounter(u8 value)</code></h4>
+<p>Define o contador da interrupção horizontal. Com a HInt habilitada, o valor 5 faz a interrupção ocorrer a cada (5+1) scanlines; o valor 0 dispara a HInt a cada scanline.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Número de scanlines entre interrupções, menos 1.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_getBGAAddress">
+<h4><code>u16 VDP_getBGAAddress(void)</code></h4>
+<p>Obtém o endereço em VRAM do tilemap do plano BG A.</p>
+<p class="returns"><strong>Retorna:</strong> endereço do tilemap do BG A em VRAM.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getBGBAddress">
+<h4><code>u16 VDP_getBGBAddress(void)</code></h4>
+<p>Obtém o endereço em VRAM do tilemap do plano BG B.</p>
+<p class="returns"><strong>Retorna:</strong> endereço do tilemap do BG B em VRAM.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getWindowAddress">
+<h4><code>u16 VDP_getWindowAddress(void)</code></h4>
+<p>Obtém o endereço em VRAM do tilemap do plano Window.</p>
+<p class="returns"><strong>Retorna:</strong> endereço do tilemap do Window em VRAM.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getSpriteListAddress">
+<h4><code>u16 VDP_getSpriteListAddress(void)</code></h4>
+<p>Obtém o endereço em VRAM da lista (tabela de atributos) de sprites.</p>
+<p class="returns"><strong>Retorna:</strong> endereço da sprite list em VRAM.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getHScrollTableAddress">
+<h4><code>u16 VDP_getHScrollTableAddress(void)</code></h4>
+<p>Obtém o endereço em VRAM da tabela de scroll horizontal.</p>
+<p class="returns"><strong>Retorna:</strong> endereço da tabela de HScroll em VRAM.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setBGAAddress">
+<h4><code>void VDP_setBGAAddress(u16 value)</code></h4>
+<p>Define o endereço em VRAM do tilemap do plano BG A. Exemplo: <code>VDP_setBGAAddress(0xC000)</code> posiciona o BG A no endereço 0xC000 da VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Endereço em VRAM; deve ser múltiplo de $2000.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setBGBAddress">
+<h4><code>void VDP_setBGBAddress(u16 value)</code></h4>
+<p>Define o endereço em VRAM do tilemap do plano BG B. Exemplo: <code>VDP_setBGBAddress(0xE000)</code> posiciona o BG B no endereço 0xE000 da VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Endereço em VRAM; deve ser múltiplo de $2000.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setWindowAddress">
+<h4><code>void VDP_setWindowAddress(u16 value)</code></h4>
+<p>Define o endereço em VRAM do tilemap do plano Window. Exemplo: <code>VDP_setWindowAddress(0xA000)</code> posiciona o Window no endereço 0xA000 da VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Endereço em VRAM; deve ser múltiplo de $1000 em H40 e de $800 em H32.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setSpriteListAddress">
+<h4><code>void VDP_setSpriteListAddress(u16 value)</code></h4>
+<p>Define o endereço em VRAM da lista de sprites. Exemplo: <code>VDP_setSpriteListAddress(0xD800)</code> posiciona a sprite list no endereço 0xD800 da VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Endereço em VRAM; deve ser múltiplo de $400 em H40 e de $200 em H32.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setHScrollTableAddress">
+<h4><code>void VDP_setHScrollTableAddress(u16 value)</code></h4>
+<p>Define o endereço em VRAM da tabela de scroll horizontal. Exemplo: <code>VDP_setHScrollTableAddress(0xD400)</code> posiciona a tabela no endereço 0xD400 da VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Endereço em VRAM; deve ser múltiplo de $400.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setScanMode">
+<h4><code>void VDP_setScanMode(u16 mode)</code></h4>
+<p>Define o modo de varredura (scan) do display. A mudança entra em vigor no próximo período de blanking. No modo interlaçado 1, o mesmo padrão é exibido nas linhas adjacentes dos campos pares e ímpares; no modo interlaçado 2, padrões diferentes podem ser exibidos (dobrando a resolução vertical efetiva). O número de células na tela permanece o mesmo em qualquer modo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>mode</code></td><td>Valores aceitos: <code>INTERLACED_NONE</code>, <code>INTERLACED_MODE1</code>, <code>INTERLACED_MODE2</code>.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setWindowHPos">
+<h4><code>void VDP_setWindowHPos(u16 right, u16 pos)</code></h4>
+<p>Define a posição horizontal do plano Window.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>right</code></td><td>Se FALSE, o Window é exibido da coluna 0 até a coluna <code>pos</code>; se TRUE, da coluna <code>pos</code> até a última coluna.</td></tr>
+<tr><td><code>pos</code></td><td>Posição horizontal do Window em unidades de 2 tiles (16 pixels).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setWindowVPos">
+<h4><code>void VDP_setWindowVPos(u16 down, u16 pos)</code></h4>
+<p>Define a posição vertical do plano Window.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>down</code></td><td>Se FALSE, o Window é exibido da linha 0 até a linha <code>pos</code>; se TRUE, da linha <code>pos</code> até a última linha.</td></tr>
+<tr><td><code>pos</code></td><td>Posição vertical do Window em unidades de 1 tile (8 pixels).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setWindowOff">
+<h4><code>void VDP_setWindowOff()</code></h4>
+<p>Desativa a exibição do plano Window (o plano BG A volta a ocupar toda a tela).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setWindowOnTop">
+<h4><code>void VDP_setWindowOnTop(u16 rows)</code></h4>
+<p>Posiciona o Window a partir da borda superior da tela, ocupando o número de linhas (em tiles) especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>rows</code></td><td>Número de linhas, expresso em tiles.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setWindowOnBottom">
+<h4><code>void VDP_setWindowOnBottom(u16 rows)</code></h4>
+<p>Posiciona o Window a partir da borda inferior da tela, ocupando o número de linhas (em tiles) especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>rows</code></td><td>Número de linhas, expresso em tiles.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setWindowOnLeft">
+<h4><code>void VDP_setWindowOnLeft(u16 cols)</code></h4>
+<p>Posiciona o Window a partir da borda esquerda da tela, ocupando o número de colunas especificado, cada uma com 2 tiles de largura (16 pixels).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>cols</code></td><td>Número de colunas, expresso em colunas duplas de tile (16 pixels).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setWindowOnRight">
+<h4><code>void VDP_setWindowOnRight(u16 cols)</code></h4>
+<p>Posiciona o Window a partir da borda direita da tela, ocupando o número de colunas especificado, cada uma com 2 tiles de largura (16 pixels).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>cols</code></td><td>Número de colunas, expresso em colunas duplas de tile (16 pixels).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setWindowFullScreen">
+<h4><code>void VDP_setWindowFullScreen()</code></h4>
+<p>Posiciona o Window ocupando a tela inteira (cobrindo completamente o plano BG A).</p>
+</article>
+
+<article class="fn" id="fn-VDP_waitDMACompletion">
+<h4><code>void VDP_waitDMACompletion(void)</code></h4>
+<p>Aguarda a conclusão da operação de DMA em andamento — equivalente a <code>DMA_waitCompletion()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_waitFIFOEmpty">
+<h4><code>void VDP_waitFIFOEmpty(void)</code></h4>
+<p>Aguarda a FIFO de escrita do VDP esvaziar (todas as escritas pendentes efetivadas na memória de vídeo).</p>
+</article>
+
+<article class="fn" id="fn-VDP_waitVInt">
+<h4><code>bool VDP_waitVInt(void)</code></h4>
+<p>Aguarda a próxima interrupção vertical (início da VInt). Retorna imediatamente se já estivermos dentro do handler de V-Int.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se foi detectada perda de frame (mais de 1 frame decorrido desde a última chamada).</p>
+</article>
+
+<article class="fn" id="fn-VDP_waitVBlank">
+<h4><code>bool VDP_waitVBlank(bool forceNext)</code></h4>
+<p>Aguarda o próximo período de blanking vertical (mesmo propósito de <code>VDP_waitVSync()</code>). O método espera até estarmos dentro da área/período de VBlank.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>forceNext</code></td><td>Se TRUE, força a espera pelo <em>próximo início</em> de VBlank mesmo se já estivermos em período de VBlank no momento da chamada.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> TRUE se foi detectada perda de frame (mais de 1 frame decorrido desde a última chamada).</p>
+</article>
+
+<article class="fn" id="fn-VDP_waitVSync">
+<h4><code>bool VDP_waitVSync(void)</code></h4>
+<p>Aguarda a sincronização vertical: espera pelo <em>próximo</em> início do blanking vertical. É a forma usual de sincronizar o loop de jogo à taxa de quadros.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se foi detectada perda de frame (mais de 1 frame decorrido desde a última chamada).</p>
+</article>
+
+<article class="fn" id="fn-VDP_waitVActive">
+<h4><code>void VDP_waitVActive(bool forceNext)</code></h4>
+<p>Aguarda a próxima área vertical ativa (fim do período de blanking vertical, quando a imagem volta a ser desenhada).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>forceNext</code></td><td>Se TRUE, força a espera pelo próximo início da área ativa mesmo se já estivermos em período ativo no momento da chamada.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_getAdjustedVCounter">
+<h4><code>u16 VDP_getAdjustedVCounter(void)</code></h4>
+<p>Retorna uma representação aprimorada do V-Counter. Usar o V-Counter bruto do VDP pode causar problemas, pois ele retrocede (rollback) durante o período de VBlank; esta função ajusta o valor para o intervalo [0-255], onde 0 é o início da área de VBlank e 255 o fim da área ativa de exibição.</p>
+<p class="returns"><strong>Retorna:</strong> V-Counter ajustado no intervalo 0-255.</p>
+</article>
+
+<article class="fn" id="fn-VDP_showFPS">
+<h4><code>void VDP_showFPS(u16 asFloat, u16 x, u16 y)</code></h4>
+<p>Exibe na tela o número de quadros por segundo (FPS). Na prática, exibe quantas vezes a função foi chamada no último segundo — para benchmarking, chame-a exatamente uma vez por atualização de frame. Ver também <code>SYS_getFPS(..)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>asFloat</code></td><td>Se diferente de zero, exibe em formato de número decimal (float).</td></tr>
+<tr><td><code>x</code></td><td>Coordenada X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Coordenada Y (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_showCPULoad">
+<h4><code>void VDP_showCPULoad(u16 x, u16 y)</code></h4>
+<p>Exibe na tela a carga estimada da CPU (em %) referente ao último frame. Ver também <code>SYS_getCPULoad()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code></td><td>Coordenada X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Coordenada Y (em tiles).</td></tr></table>
+</article>
+</section>
+
+<section class="module" id="mod-vdp-bg">
+<h2>vdp_bg.h <span class="subtitle">Planos de fundo — scroll, texto, bitmaps e imagens</span></h2>
+<p class="mod-desc">Este módulo fornece as facilidades de manipulação dos planos de fundo A e B (e do plano Window) do VDP do Mega Drive: definição de scroll horizontal e vertical em todos os modos suportados pelo hardware (plane, tile, linha e coluna de 2 tiles), limpeza de planes, desenho de texto com a fonte do sistema, desenho de números e carga/exibição de bitmaps e de estruturas <code>Image</code> (tileset + tilemap + palette) geradas pelo rescomp. Use-o sempre que precisar desenhar conteúdo estático ou textual em um plane, ou animar o scroll dos backgrounds.</p>
+
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>curTileInd</code></td><td><code>extern u16</code></td><td>Variável global que contém a posição (índice) atual de tile na VRAM onde os próximos dados de tile serão carregados por <code>VDP_drawBitmap()</code> / <code>VDP_drawImage()</code>.</td></tr>
+</table>
+</div>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-Image">
+<h4><code>Image</code></h4>
+<p>Estrutura que reúne todos os dados necessários para definir uma imagem em um plano de fundo: palette, tileset e tilemap. É o formato produzido pelo rescomp para recursos do tipo IMAGE. Use o método <code>unpackImage()</code> para descompactar quando a compressão estiver habilitada nas estruturas TileSet ou TileMap.</p>
+<pre class="code">typedef struct
+{
+    Palette *palette;   // dados da palette da imagem
+    TileSet *tileset;   // definição dos tiles da imagem
+    TileMap *tilemap;   // definição do tilemap da imagem
+} Image;</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-VDP_setHorizontalScroll">
+<h4><code>void VDP_setHorizontalScroll(VDPPlane plane, s16 value)</code></h4>
+<p>Define o scroll horizontal do plane no modo plain (plano inteiro). O VDP suporta 3 modos de scroll horizontal: plain (plane inteiro), tile (blocos de 8 pixels) e line (por pixel/linha); use <code>VDP_setScrollingMode()</code> para trocar o modo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>.</td></tr>
+<tr><td><code>value</code></td><td>Deslocamento de scroll horizontal. Valor negativo move o plane para a esquerda; positivo, para a direita.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setHorizontalScrollVSync">
+<h4><code>void VDP_setHorizontalScrollVSync(VDPPlane plane, s16 value)</code></h4>
+<p>Igual a <code>VDP_setHorizontalScroll(..)</code>, exceto que a atualização do scroll é adiada para o próximo VSync — evitando artefatos de tearing quando o valor muda no meio do frame.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>.</td></tr>
+<tr><td><code>value</code></td><td>Deslocamento de scroll horizontal. Negativo move para a esquerda; positivo, para a direita.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setHorizontalScrollTile">
+<h4><code>void VDP_setHorizontalScrollTile(VDPPlane plane, u16 tile, s16* values, u16 len, TransferMethod tm)</code></h4>
+<p>Define o scroll horizontal do plane no modo tile (um deslocamento por bloco de 8 pixels de altura). Requer o modo <code>HSCROLL_TILE</code> ativo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>.</td></tr>
+<tr><td><code>tile</code></td><td>Primeira linha de tile cujo scroll será definido.</td></tr>
+<tr><td><code>values</code></td><td>Vetor com os deslocamentos de scroll horizontal. Valores negativos movem o plane para a esquerda; positivos, para a direita.</td></tr>
+<tr><td><code>len</code></td><td>Número de linhas de tile a definir.</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>. Recomenda-se <code>DMA_QUEUE</code>, executado da forma mais rápida possível durante o VBlank.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setHorizontalScrollLine">
+<h4><code>void VDP_setHorizontalScrollLine(VDPPlane plane, u16 line, s16* values, u16 len, TransferMethod tm)</code></h4>
+<p>Define o scroll horizontal do plane no modo line (um deslocamento por linha de pixel — a granularidade mais fina, ideal para efeitos de parallax e distorção). Requer o modo <code>HSCROLL_LINE</code> ativo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>.</td></tr>
+<tr><td><code>line</code></td><td>Primeira linha cujo scroll será definido.</td></tr>
+<tr><td><code>values</code></td><td>Vetor com os deslocamentos de scroll horizontal. Negativos movem para a esquerda; positivos, para a direita.</td></tr>
+<tr><td><code>len</code></td><td>Número de linhas a definir.</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>. Recomenda-se <code>DMA_QUEUE</code>.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setVerticalScroll">
+<h4><code>void VDP_setVerticalScroll(VDPPlane plane, s16 value)</code></h4>
+<p>Define o scroll vertical do plane no modo plain (plano inteiro). O VDP suporta 2 modos de scroll vertical: plain (plane inteiro) e coluna de 2 tiles (blocos de 16 pixels).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>.</td></tr>
+<tr><td><code>value</code></td><td>Deslocamento de scroll vertical. Valor negativo move o plane para baixo; positivo, para cima.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setVerticalScrollVSync">
+<h4><code>void VDP_setVerticalScrollVSync(VDPPlane plane, s16 value)</code></h4>
+<p>Igual a <code>VDP_setVerticalScroll(..)</code>, exceto que a atualização do scroll é adiada para o próximo VSync.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>.</td></tr>
+<tr><td><code>value</code></td><td>Deslocamento de scroll vertical. Negativo move para baixo; positivo, para cima.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setVerticalScrollTile">
+<h4><code>void VDP_setVerticalScrollTile(VDPPlane plane, u16 tile, s16* values, u16 len, TransferMethod tm)</code></h4>
+<p>Define o scroll vertical do plane no modo 2-Tiles (um deslocamento por coluna de 2 tiles / 16 pixels de largura, armazenado na VSRAM). Requer o modo <code>VSCROLL_COLUMN</code> ativo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>.</td></tr>
+<tr><td><code>tile</code></td><td>Primeira coluna (em unidades de 2 tiles) cujo scroll será definido.</td></tr>
+<tr><td><code>values</code></td><td>Vetor com os deslocamentos de scroll vertical. Negativos movem o plane para baixo; positivos, para cima.</td></tr>
+<tr><td><code>len</code></td><td>Número de colunas a definir.</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>. Recomenda-se <code>DMA_QUEUE</code>.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearPlane">
+<h4><code>void VDP_clearPlane(VDPPlane plane, bool wait)</code></h4>
+<p>Limpa o plane especificado (preenchendo o tilemap com zeros, via DMA).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane a limpar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>wait</code></td><td>Se TRUE, aguarda a conclusão da operação; se FALSE, retorna imediatamente — nesse caso é preciso aguardar a conclusão do DMA (<code>DMA_waitCompletion()</code>) antes de acessar o VDP novamente.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_getTextPlane">
+<h4><code>VDPPlane VDP_getTextPlane(void)</code></h4>
+<p>Retorna o plane usado atualmente para exibir texto pelas funções <code>VDP_drawText(..)</code> / <code>VDP_clearText(..)</code>.</p>
+<p class="returns"><strong>Retorna:</strong> <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getTextPalette">
+<h4><code>u16 VDP_getTextPalette(void)</code></h4>
+<p>Retorna o número da palette usada atualmente para exibir texto.</p>
+<p class="returns"><strong>Retorna:</strong> índice da palette (0 a 3).</p>
+</article>
+
+<article class="fn" id="fn-VDP_getTextPriority">
+<h4><code>u16 VDP_getTextPriority(void)</code></h4>
+<p>Retorna a prioridade usada atualmente para exibir texto.</p>
+<p class="returns"><strong>Retorna:</strong> 1 = tile de prioridade alta; 0 = tile de prioridade baixa.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTextPlane">
+<h4><code>void VDP_setTextPlane(VDPPlane plane)</code></h4>
+<p>Define o plane usado para exibir texto pelas funções de texto simples.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>plane</code></td><td>Plane onde exibir o texto. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setTextPalette">
+<h4><code>void VDP_setTextPalette(u16 palette)</code></h4>
+<p>Define a palette usada para exibir texto.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>palette</code></td><td>Número da palette (0 a 3, ver <code>PAL0</code>..<code>PAL3</code>).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_setTextPriority">
+<h4><code>void VDP_setTextPriority(u16 prio)</code></h4>
+<p>Define a prioridade usada para exibir texto.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>prio</code></td><td>1 = tile de prioridade alta (desenhado acima de tiles/sprites de prioridade baixa); 0 = tile de prioridade baixa.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_drawTextEx">
+<h4><code>void VDP_drawTextEx(VDPPlane plane, const char* str, u16 basetile, u16 x, u16 y, TransferMethod tm)</code></h4>
+<p>Desenha texto no plane especificado (método avançado, com controle total dos atributos de tile e do método de transferência).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde desenhar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>str</code></td><td>String a desenhar.</td></tr>
+<tr><td><code>basetile</code></td><td>Atributos de tile base (ver macro <code>TILE_ATTR()</code>: palette, prioridade, flips).</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>. Usar <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code> garante execução durante o VBlank.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearTextEx">
+<h4><code>void VDP_clearTextEx(VDPPlane plane, u16 basetile, u16 x, u16 y, u16 w, TransferMethod tm)</code></h4>
+<p>Limpa um trecho de uma única linha de texto (método avançado).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde limpar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>basetile</code></td><td>Atributos de tile base (ver macro <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura a limpar (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearTextAreaEx">
+<h4><code>void VDP_clearTextAreaEx(VDPPlane plane, u16 basetile, u16 x, u16 y, u16 w, u16 h, TransferMethod tm)</code></h4>
+<p>Limpa uma área retangular de texto (método avançado).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde limpar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>basetile</code></td><td>Atributos de tile base (ver macro <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura a limpar (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura a limpar (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_drawTextBG">
+<h4><code>void VDP_drawTextBG(VDPPlane plane, const char* str, u16 x, u16 y)</code></h4>
+<p>Desenha texto no plane especificado, usando a palette e a prioridade de texto configuradas (<code>VDP_setTextPalette()</code> / <code>VDP_setTextPriority()</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde desenhar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>str</code></td><td>String a desenhar.</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearTextBG">
+<h4><code>void VDP_clearTextBG(VDPPlane plane, u16 x, u16 y, u16 w)</code></h4>
+<p>Limpa um trecho de uma única linha de texto no plane especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde limpar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura a limpar (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearTextAreaBG">
+<h4><code>void VDP_clearTextAreaBG(VDPPlane plane, u16 x, u16 y, u16 w, u16 h)</code></h4>
+<p>Limpa uma área retangular de texto no plane especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde limpar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura a limpar (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura a limpar (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearTextLineBG">
+<h4><code>void VDP_clearTextLineBG(VDPPlane plane, u16 y)</code></h4>
+<p>Limpa uma linha completa de texto no plane especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde limpar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_drawText">
+<h4><code>void VDP_drawText(const char* str, u16 x, u16 y)</code></h4>
+<p>Desenha texto no plane de texto configurado (ver <code>VDP_setTextPlane()</code>), com a palette e prioridade de texto atuais. É a forma mais simples de exibir texto na tela com o SGDK.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>str</code></td><td>String a desenhar.</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_drawTextBGFill">
+<h4><code>void VDP_drawTextBGFill(VDPPlane plane, const char* str, u16 x, u16 y, u16 len)</code></h4>
+<p>Desenha texto no plane especificado e limpa o espaço restante não utilizado. Se a nova linha for mais curta que a anteriormente desenhada no mesmo lugar, os caracteres antigos são removidos. Funciona significativamente mais rápido que chamar <code>VDP_clearText()</code> seguido de <code>VDP_drawText()</code> — adequado quando há muitas informações sendo atualizadas na tela.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde desenhar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>str</code></td><td>String a desenhar. Para operação correta, não deve exceder 40 caracteres.</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>len</code></td><td>Comprimento fixo do campo de texto. Para operação correta, não deve exceder 40 caracteres.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_drawTextFill">
+<h4><code>void VDP_drawTextFill(const char* str, u16 x, u16 y, u16 len)</code></h4>
+<p>Desenha texto (no plane de texto configurado) e limpa o espaço restante não utilizado. Mesmo comportamento de <code>VDP_drawTextBGFill(..)</code>, usando o plane de texto atual.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>str</code></td><td>String a desenhar. Para operação correta, não deve exceder 40 caracteres.</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>len</code></td><td>Comprimento fixo do campo de texto. Para operação correta, não deve exceder 40 caracteres.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearText">
+<h4><code>void VDP_clearText(u16 x, u16 y, u16 w)</code></h4>
+<p>Limpa um trecho de uma única linha de texto no plane de texto configurado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura a limpar (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearTextArea">
+<h4><code>void VDP_clearTextArea(u16 x, u16 y, u16 w, u16 h)</code></h4>
+<p>Limpa uma área retangular de texto no plane de texto configurado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura a limpar (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura a limpar (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearTextLine">
+<h4><code>void VDP_clearTextLine(u16 y)</code></h4>
+<p>Limpa uma linha completa de texto no plane de texto configurado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_drawBitmap">
+<h4><code>bool VDP_drawBitmap(VDPPlane plane, const Bitmap *bitmap, u16 x, u16 y)</code></h4>
+<p>Desenha um Bitmap no plano de fundo especificado, na posição dada. A função converte "on the fly" o bitmap 4bpp em dados de tile e os transfere para a VRAM. É muito útil para imagens bitmap, mas a conversão consome tempo — use apenas em telas estáticas. Para uso "in-game", prefira <code>VDP_loadTileData()</code> com dados de tile já preparados.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde desenhar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>bitmap</code></td><td>Bitmap Genesis (largura e altura devem ser alinhadas a 8). É descompactado "on the fly" se necessário (requer memória).</td></tr>
+<tr><td><code>x</code></td><td>Posição X no plane (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y no plane (em tiles).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se não houver memória suficiente para descompactar o Bitmap (apenas quando a compressão estava habilitada).</p>
+</article>
+
+<article class="fn" id="fn-VDP_drawBitmapEx">
+<h4><code>bool VDP_drawBitmapEx(VDPPlane plane, const Bitmap *bitmap, u16 basetile, u16 x, u16 y, bool loadpal)</code></h4>
+<p>Versão avançada de <code>VDP_drawBitmap()</code>: desenha um Bitmap no plano de fundo especificado com controle dos atributos de tile base e da carga da palette. Mesmas ressalvas de desempenho: conversão "on the fly", recomendada apenas para telas estáticas.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde desenhar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>bitmap</code></td><td>Bitmap Genesis (largura e altura devem ser alinhadas a 8). É descompactado "on the fly" se necessário.</td></tr>
+<tr><td><code>basetile</code></td><td>Atributos de tile base (ver macro <code>TILE_ATTR_FULL()</code>: índice de tile inicial, palette, prioridade, flips).</td></tr>
+<tr><td><code>x</code></td><td>Posição X no plane (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y no plane (em tiles).</td></tr>
+<tr><td><code>loadpal</code></td><td>Se diferente de zero (TRUE/FALSE), carrega também a informação de palette do bitmap.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se não houver memória suficiente para descompactar o Bitmap (apenas quando a compressão estava habilitada).</p>
+</article>
+
+<article class="fn" id="fn-VDP_drawImage">
+<h4><code>bool VDP_drawImage(VDPPlane plane, const Image *image, u16 x, u16 y)</code></h4>
+<p>Desenha uma Image (via DMA) no plano de fundo especificado, na posição dada: carrega os dados de tile da imagem na VRAM e exibe o tilemap na posição indicada do plane.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde desenhar o tilemap. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>image</code></td><td>Estrutura Image a desenhar. É descompactada "on the fly" se necessário (requer memória).</td></tr>
+<tr><td><code>x</code></td><td>Posição X no plane (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y no plane (em tiles).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se não houver memória suficiente para descompactar a Image (apenas quando a compressão estava habilitada).</p>
+</article>
+
+<article class="fn" id="fn-VDP_drawImageEx">
+<h4><code>bool VDP_drawImageEx(VDPPlane plane, const Image *image, u16 basetile, u16 x, u16 y, bool loadpal, bool dma)</code></h4>
+<p>Versão avançada de <code>VDP_drawImage()</code>: carrega os dados de tile da imagem na VRAM e exibe o tilemap na posição indicada, com controle do tile base, da carga da palette e do uso de DMA.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde carregar o tilemap. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>image</code></td><td>Estrutura Image a desenhar. É descompactada "on the fly" se necessário.</td></tr>
+<tr><td><code>basetile</code></td><td>Atributos de tile base (ver macro <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X no plane (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y no plane (em tiles).</td></tr>
+<tr><td><code>loadpal</code></td><td>Se diferente de zero, carrega também a informação de palette da imagem.</td></tr>
+<tr><td><code>dma</code></td><td>Se TRUE, usa DMA para as transferências.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se não houver memória suficiente para descompactar a Image (apenas se a imagem estava compactada).</p>
+</article>
+
+<article class="fn" id="fn-VDP_drawNumEx">
+<h4><code>void VDP_drawNumEx(VDPPlane plane, s32 value, u16 basetile, u16 x, u16 y, TransferMethod tm)</code></h4>
+<p>Desenha um número inteiro de 32 bits com sinal no plane especificado (método avançado).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde desenhar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>value</code></td><td>Valor inteiro de 32 bits com sinal a desenhar.</td></tr>
+<tr><td><code>basetile</code></td><td>Atributos de tile base (ver macro <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>. Usar <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code> garante execução durante o VBlank.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_drawNumBG">
+<h4><code>void VDP_drawNumBG(VDPPlane plane, s32 value, u16 x, u16 y)</code></h4>
+<p>Desenha um número inteiro de 32 bits com sinal no plane especificado, usando os atributos de texto atuais.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane onde desenhar. Valores aceitos: <code>BG_A</code>, <code>BG_B</code>, <code>WINDOW</code>.</td></tr>
+<tr><td><code>value</code></td><td>Valor inteiro de 32 bits com sinal a desenhar.</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_drawNum">
+<h4><code>void VDP_drawNum(s32 value, u16 x, u16 y)</code></h4>
+<p>Desenha um número inteiro de 32 bits com sinal no plane de texto configurado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor inteiro de 32 bits com sinal a desenhar.</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr></table>
+</article>
+</section>

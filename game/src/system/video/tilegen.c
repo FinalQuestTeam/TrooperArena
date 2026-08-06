@@ -1,0 +1,202 @@
+// Fábrica de assets: geração procedural dos tiles (4bpp) e da paleta dos objetos.
+// Roda uma vez no boot (TILEGEN_init). O buffer é alocado só durante a geração e
+// liberado — não ocupa RAM permanente. O mapa de índices está em tiles.h.
+
+#include "system/video/tilegen.h"
+#include "system/video/sprites/tiles.h"
+#include "system/video/sprites/icons_data.h"
+#include "core/game.h"
+#include "elements/lava.h"
+#include "elements/mud.h"
+#include "items/items.h"
+
+#define TILEBUF_BYTES   (NUM_TILES * 8 * (u16) sizeof(u32))
+static u32 *tileBuf;
+
+// pixel em um bloco NxN em ordem de coluna (layout de sprite MD);
+// colTiles = altura do sprite em tiles (2 para 16x16, 4 para 32x32)
+static void setPix(u16 baseTile, u16 x, u16 y, u16 color, u16 colTiles)
+{
+    u16 tile = baseTile + (x / 8) * colTiles + (y / 8);
+    tileBuf[tile * 8 + (y % 8)] |= (u32) color << ((7 - (x % 8)) * 4);
+}
+
+// desenha um tile 8x8 a partir de um mapa de caracteres (chave -> cor)
+static void buildTile8(u16 tile, const char *const rows[8], char key, u16 color)
+{
+    for (u16 y = 0; y < 8; y++)
+        for (u16 x = 0; x < 8; x++)
+            if (rows[y][x] == key)
+                tileBuf[tile * 8 + y] |= (u32) color << ((7 - x) * 4);
+}
+
+static void buildTiles(void)
+{
+    tileBuf = MEM_alloc(TILEBUF_BYTES);
+    memset(tileBuf, 0, TILEBUF_BYTES);
+
+    for (u16 y = 0; y < 16; y++)
+    {
+        for (u16 x = 0; x < 16; x++)
+        {
+            // círculo do jogador: raio 7,5 (coordenadas dobradas)
+            s16 dx = (s16) (2 * x) - 15;
+            s16 dy = (s16) (2 * y) - 15;
+            s16 d2 = dx * dx + dy * dy;
+            if (d2 <= 225) setPix(TILE_PLAYER, x, y, (d2 >= 160) ? 1 : 2, 2);
+        }
+    }
+
+    // os tiles dos inimigos (insetos, 8 direções) são gerados em enemygfx.c
+
+    // projéteis 8x8 (tile único)
+    for (u16 y = 0; y < 8; y++)
+    {
+        for (u16 x = 0; x < 8; x++)
+        {
+            s16 dx = (s16) (2 * x) - 7;
+            s16 dy = (s16) (2 * y) - 7;
+            if (dx * dx + dy * dy <= 49)
+            {
+                tileBuf[TILE_PSHOT * 8 + y] |= (u32) 4 << ((7 - x) * 4);
+                tileBuf[TILE_ESHOT * 8 + y] |= (u32) 5 << ((7 - x) * 4);
+            }
+        }
+    }
+
+    // parede: bloco sólido com linha de brilho
+    for (u16 y = 0; y < 8; y++)
+    {
+        for (u16 x = 0; x < 8; x++)
+        {
+            u16 c = ((x == 0) || (y == 0)) ? 7 : 6;
+            tileBuf[TILE_WALL * 8 + y] |= (u32) c << ((7 - x) * 4);
+        }
+    }
+
+    // ícones 8x8 de HUD/telas — a arte (char-maps) fica em sprites/icons_data.h;
+    // aqui só a legenda char -> cor da PAL1 de cada um
+    buildTile8(TILE_SKULL, ICON_SKULL_ART, '#', 1);         // caveira (contador)
+
+    buildTile8(TILE_BOMB_ICON, ICON_BOMB_ART, 'B', 11);     // bomba: corpo
+    buildTile8(TILE_BOMB_ICON, ICON_BOMB_ART, '#', 1);      //   contorno/brilho
+    buildTile8(TILE_BOMB_ICON, ICON_BOMB_ART, 'o', 5);      //   faísca
+
+    buildTile8(TILE_BOLT, ICON_BOLT_ART, '#', 4);           // raio — amarelo
+
+    // porta 8x8 (área de passagem entre as fases teste): painel verde com
+    // borda clara — ladrilhado num retângulo, forma um portão/portal
+    for (u16 y = 0; y < 8; y++)
+    {
+        for (u16 x = 0; x < 8; x++)
+        {
+            bool edge = (x == 0) || (x == 7) || (y == 0) || (y == 7);
+            tileBuf[TILE_DOOR * 8 + y] |= (u32) (edge ? 1 : 14) << ((7 - x) * 4);
+        }
+    }
+
+    // nó do raio em cadeia (losango amarelo com miolo branco)
+    buildTile8(TILE_SPARK, ICON_SPARK_ART, '#', 4);         // amarelo
+    buildTile8(TILE_SPARK, ICON_SPARK_ART, 'o', 1);         // miolo branco
+
+    // sombra do jogador: círculo pequeno escuro 16x16 (cor 11) sob o mech —
+    // destaca do chão sem cobrir a arena. Desenhado atrás dos sprites (spritelist.c).
+    for (u16 y = 0; y < 16; y++)
+    {
+        for (u16 x = 0; x < 16; x++)
+        {
+            const s16 dx = (s16) (2 * x - 15);
+            const s16 dy = (s16) (2 * y - 15);
+            if (dx * dx + dy * dy <= 15 * 15) setPix(TILE_SHADOW, x, y, 11, 2);
+        }
+    }
+
+    // ícones 8x8 dos inimigos (quadrado colorido com borda clara) para as
+    // telas de fase/pausa — cores idênticas às dos sprites (PAL1: 3/4/8)
+    static const struct { u16 tile; u16 color; } enemyIcon[4] =
+    {
+        { TILE_ICON_RED, 3 },
+        { TILE_ICON_YEL, 4 },
+        { TILE_ICON_PUR, 8 },
+        { TILE_ICON_ORG, 12 },
+    };
+    for (u16 k = 0; k < 4; k++)
+    {
+        for (u16 y = 0; y < 8; y++)
+        {
+            for (u16 x = 0; x < 8; x++)
+            {
+                bool edge = (x == 0) || (x == 7) || (y == 0) || (y == 7);
+                u16 c = edge ? 1 : enemyIcon[k].color;
+                tileBuf[enemyIcon[k].tile * 8 + y] |= (u32) c << ((7 - x) * 4);
+            }
+        }
+    }
+
+    // overlay "congelado": 16 tiles idênticos (bloco 4x4) em xadrez ciano (índice
+    // 2); desenhado por cima do inimigo congelado (spritelist.c) → tom azulado
+    for (u16 t = 0; t < 16; t++)
+        for (u16 yy = 0; yy < 8; yy++)
+            for (u16 xx = 0; xx < 8; xx++)
+                if (((xx + yy) & 1) == 0)
+                    tileBuf[(TILE_FROST + t) * 8 + yy] |= (u32) 2 << ((7 - xx) * 4);
+
+    // ícones do inventário no HUD (escudo, gelo, fogo). Bomba e raio já têm
+    // ícone (TILE_BOMB_ICON / TILE_BOLT).
+    buildTile8(TILE_ICON_SHIELD, ICON_SHIELD_ART, 'b', 15);
+    buildTile8(TILE_ICON_SHIELD, ICON_SHIELD_ART, '#', 1);
+
+    buildTile8(TILE_ICON_ICE, ICON_ICE_ART, 'c', 2);
+
+    buildTile8(TILE_ICON_FIRE, ICON_FIRE_ART, 'r', 3);
+    buildTile8(TILE_ICON_FIRE, ICON_FIRE_ART, 'f', 12);
+    buildTile8(TILE_ICON_FIRE, ICON_FIRE_ART, 'y', 4);
+
+    // poça de sangue (verde): quarto de disco denso no canto (0,0); a poça 16x16
+    // é montada por 4 cópias espelhadas deste tile (blood.c) → mancha arredondada.
+    for (u16 y = 0; y < 8; y++)
+        for (u16 x = 0; x < 8; x++)
+        {
+            const u16 d2 = x * x + y * y;
+            u16 c = 0;
+            if (d2 <= 40)                       c = 14;                    // verde (corpo)
+            else if (d2 <= 60 && ((x + y) & 1)) c = (((x * 3 + y) & 3)) ? 14 : 11;  // borda salpicada
+            if (c) tileBuf[TILE_BLOOD * 8 + y] |= (u32) c << ((7 - x) * 4);
+        }
+
+    // tiles dos elementos de fase e dos itens
+    LAVA_buildTile(tileBuf);
+    MUD_buildTile(tileBuf);
+    ITEMS_buildTiles(tileBuf);
+
+    VDP_loadTileData(tileBuf, TILE_USER_INDEX, NUM_TILES, DMA);
+
+    MEM_free(tileBuf);      // buffer só serve na geração; libera a RAM
+    tileBuf = NULL;
+}
+
+// paleta dos objetos (PAL1); pública porque a arte do título toma a PAL1 emprestada
+void TILEGEN_palette(void)
+{
+    PAL_setColor(17, RGB24_TO_VDPCOLOR(0xF0F0F0));  // 1: contorno claro
+    PAL_setColor(18, RGB24_TO_VDPCOLOR(0x20C0E0));  // 2: jogador (ciano)
+    PAL_setColor(19, RGB24_TO_VDPCOLOR(0xD02020));  // 3: inimigo vermelho
+    PAL_setColor(20, RGB24_TO_VDPCOLOR(0xF0E040));  // 4: inimigo amarelo / tiro do jogador
+    PAL_setColor(21, RGB24_TO_VDPCOLOR(0xF08020));  // 5: tiro inimigo
+    PAL_setColor(22, RGB24_TO_VDPCOLOR(0x506070));  // 6: parede
+    PAL_setColor(23, RGB24_TO_VDPCOLOR(0x8098A8));  // 7: brilho da parede
+    PAL_setColor(24, RGB24_TO_VDPCOLOR(0x6820B0));  // 8: inimigo roxo (mais escuro p/ o contorno branco aparecer)
+    PAL_setColor(25, RGB24_TO_VDPCOLOR(0x8A5A28));  // 9: lama (marrom)
+    PAL_setColor(26, RGB24_TO_VDPCOLOR(0x5A3A14));  // 10: lama (torrões escuros)
+    PAL_setColor(27, RGB24_TO_VDPCOLOR(0x282830));  // 11: corpo da bomba
+    PAL_setColor(28, RGB24_TO_VDPCOLOR(0xF08000));  // 12: inimigo laranja
+    PAL_setColor(29, RGB24_TO_VDPCOLOR(0x909090));  // 13: dummy de teste (cinza)
+    PAL_setColor(30, RGB24_TO_VDPCOLOR(0x40D040));  // 14: botinha (verde)
+    PAL_setColor(31, RGB24_TO_VDPCOLOR(0x3060E0));  // 15: escudo (azul)
+}
+
+void TILEGEN_init(void)
+{
+    TILEGEN_palette();
+    buildTiles();
+}

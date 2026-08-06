@@ -1,0 +1,863 @@
+<section class="module" id="mod-sound">
+<h2>sound.h <span class="subtitle">Definições gerais de som compartilhadas entre drivers</span></h2>
+<p class="mod-desc">O áudio do Mega Drive é produzido por dois chips: o <strong>YM2612</strong> (síntese FM, 6 canais, sendo que o canal 6 pode operar como DAC de 8 bits para samples PCM) e o <strong>SN76489</strong>, o PSG (4 canais: 3 geradores de onda quadrada + 1 canal de ruído). Quem normalmente comanda esses chips é o <strong>Z80</strong>, a CPU secundária dedicada ao som, que roda um "driver" carregado pelo 68000. O SGDK fornece vários drivers prontos com perfis diferentes: <strong>XGM</strong> (música VGM/XGM completa + 4 canais PCM a 14 kHz com prioridades de SFX), <strong>XGM2</strong> (sucessor: 3 canais PCM a 13,3/6,65 kHz, envelopes de volume para FM e PSG, fades, melhor proteção contra contenção de DMA), <strong>PCM simples</strong> (1 canal, 8 a 32 kHz — melhor qualidade de sample, sem música), <strong>PCM4</strong> (4 canais mixados a 16 kHz com volume por canal) e <strong>DPCM2</strong> (2 canais DPCM 4 bits a 22 kHz — samples comprimidos). Em resumo: use XGM/XGM2 quando quiser música + SFX; use os drivers PCM quando só precisar de samples com mais canais/qualidade/taxa. Este header <code>sound.h</code> reúne as definições básicas compartilhadas por todos eles: enums de canal PCM e panning, máscaras de seleção de canal e o driver nulo.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>SOUND_PCM_CH1_MSK</code> … <code>SOUND_PCM_CH4_MSK</code></td><td><code>1 &lt;&lt; SOUND_PCM_CHn</code></td><td>Máscaras de seleção dos canais PCM 1 a 4; podem ser combinadas com OR para consultar vários canais de uma vez.</td></tr>
+<tr><td><code>SOUND_PCM_AUTO</code></td><td>—</td><td>Obsoleto: gera erro de compilação; use <code>SOUND_PCM_CH_AUTO</code>.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-SoundPCMChannel">
+<h4><code>SoundPCMChannel</code></h4>
+<p>Enum de seleção de canal PCM, usado por todos os drivers de sample do SGDK.</p>
+<pre class="code">typedef enum
+{
+    SOUND_PCM_CH_AUTO = -1,  // seleção automática de canal
+    SOUND_PCM_CH1 = 0,       // canal 1
+    SOUND_PCM_CH2,           // canal 2
+    SOUND_PCM_CH3,           // canal 3
+    SOUND_PCM_CH4,           // canal 4
+} SoundPCMChannel;</pre>
+</article>
+<article class="type" id="type-SoundPanning">
+<h4><code>SoundPanning</code></h4>
+<p>Enum de panning (posicionamento estéreo) para reprodução de samples.</p>
+<pre class="code">typedef enum
+{
+    SOUND_PAN_NONE = 0x00,    // mudo
+    SOUND_PAN_RIGHT = 0x40,   // apenas alto-falante direito
+    SOUND_PAN_LEFT = 0x80,    // apenas alto-falante esquerdo
+    SOUND_PAN_CENTER = 0xC0   // centro (ambos os alto-falantes)
+} SoundPanning;</pre>
+</article>
+</div>
+<article class="fn" id="fn-SND_NULL_loadDriver">
+<h4><code>void SND_NULL_loadDriver(void)</code></h4>
+<p>Carrega o driver Z80 nulo (dummy). Útil para descarregar qualquer driver de som ativo e deixar o Z80 sem tarefa de áudio.</p>
+</article>
+</section>
+<section class="module" id="mod-xgm">
+<h2>xgm.h <span class="subtitle">Driver de música XGM (eXtended Genesis Music)</span></h2>
+<p class="mod-desc">O XGM é o driver de música "clássico" do SGDK. Ele roda inteiramente no Z80 e toca músicas em formato VGM/XGM (comandos para o YM2612 e para o PSG), além de mixar <strong>4 canais PCM a 14 kHz fixos</strong> pelo DAC do YM2612, com <strong>16 níveis de prioridade</strong> para SFX. O driver foi projetado para minimizar a contenção de barramento durante DMA (quando o 68000 monopoliza o bus e o Z80 pararia, degradando o PCM). Comparado ao XGM2, oferece um canal PCM a mais, porém sem envelopes de volume FM/PSG, sem fades nativos e com proteção de DMA menos robusta; o XGM2 é geralmente recomendado para projetos novos. Os samples PCM são registrados por <em>id</em> (1–63 reservados para música, 64–255 para SFX). O header também define diversas macros <code>SND_*_XGM</code> obsoletas que apenas geram erro de compilação apontando o substituto.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>SND_isPlaying_XGM</code>, <code>SND_startPlay_XGM</code>, <code>SND_stopPlay_XGM</code>, <code>SND_pausePlay_XGM</code>, <code>SND_resumePlay_XGM</code>, <code>SND_isPlayingPCM_XGM</code>, <code>SND_setPCM_XGM</code>, <code>SND_setPCMFast_XGM</code>, <code>SND_startPlayPCM_XGM</code>, <code>SND_stopPlayPCM_XGM</code>, <code>SND_getMusicTempo_XGM</code>, <code>SND_setMusicTempo_XGM</code>, <code>SND_getManualSync_XGM</code>, <code>SND_setManualSync_XGM</code>, <code>SND_nextFrame_XGM</code>, <code>SND_nextXFrame_XGM</code>, <code>SND_setLoopNumber_XGM</code>, <code>SND_set68KBUSProtection_XGM</code>, <code>SND_getForceDelayDMA_XGM</code>, <code>SND_setForceDelayDMA_XGM</code>, <code>SND_getCPULoad_XGM</code></td><td><code>_Pragma(erro)</code></td><td>Família de macros obsoletas da API antiga; cada uma gera erro de compilação indicando a função <code>XGM_*</code> equivalente.</td></tr>
+</table>
+</div>
+<article class="fn" id="fn-XGM_loadDriver">
+<h4><code>void XGM_loadDriver(const bool waitReady)</code></h4>
+<p>Carrega o driver de som XGM no Z80.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>waitReady</code></td><td>Se <code>TRUE</code>, aguarda o driver ficar pronto antes de retornar.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_isPlaying">
+<h4><code>bool XGM_isPlaying(void)</code></h4>
+<p>Informa se o driver XGM está tocando música no momento.</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se uma música está sendo reproduzida.</p>
+</article>
+<article class="fn" id="fn-XGM_startPlay">
+<h4><code>void XGM_startPlay(const u8 *song)</code></h4>
+<p>Inicia a reprodução da faixa XGM especificada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>song</code></td><td>Endereço da faixa XGM na ROM.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_startPlay_FAR">
+<h4><code>void XGM_startPlay_FAR(const u8 *song, u32 size)</code></h4>
+<p>Igual a <code>XGM_startPlay(..)</code>, mas suporta músicas acessíveis via bank switch (ROMs maiores que 4 MB, mapeador de banco).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>song</code></td><td>Endereço da faixa XGM.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho da faixa XGM em bytes.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_stopPlay">
+<h4><code>void XGM_stopPlay(void)</code></h4>
+<p>Para a reprodução da música atual.</p>
+</article>
+<article class="fn" id="fn-XGM_pausePlay">
+<h4><code>void XGM_pausePlay(void)</code></h4>
+<p>Pausa a música em reprodução; ela pode ser retomada com <code>XGM_resumePlay()</code>.</p>
+<p class="note">Devido à natureza da síntese FM, a retomada nunca é perfeita: algumas notas ficarão ausentes até o próximo evento de key-on.</p>
+</article>
+<article class="fn" id="fn-XGM_resumePlay">
+<h4><code>void XGM_resumePlay(void)</code></h4>
+<p>Retoma a música pausada com <code>XGM_pausePlay()</code>.</p>
+<p class="note">Pela natureza da síntese FM, a retomada nunca é perfeita e algumas notas ficam faltando até o próximo key-on.</p>
+</article>
+<article class="fn" id="fn-XGM_isPlayingPCM">
+<h4><code>u8 XGM_isPlayingPCM(const u16 channel_mask)</code></h4>
+<p>Retorna o estado de reprodução dos canais PCM especificados.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel_mask</code></td><td>Máscara dos canais a consultar (<code>SOUND_PCM_CH1_MSK</code> … <code>SOUND_PCM_CH4_MSK</code>); as máscaras podem ser combinadas com OR para consultar vários canais de uma vez, ex.: <code>XGM_isPlayingPCM(SOUND_PCM_CH1_MSK | SOUND_PCM_CH2_MSK)</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> máscara dos canais que estão tocando no momento (ex.: <code>SOUND_PCM_CH1_MSK | SOUND_PCM_CH3_MSK</code> se os canais 1 e 3 estiverem ativos).</p>
+</article>
+<article class="fn" id="fn-XGM_setPCM">
+<h4><code>void XGM_setPCM(const u8 id, const u8 *sample, const u32 len)</code></h4>
+<p>Declara um novo sample PCM (máximo de 255) para o driver XGM. Ids &lt; 64 são reservados para a música; para SFX use id &gt;= 64.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>id</code></td><td>Id do sample: 0 não é permitido; 1–63 são usados pela música; 64–255 para SFX.</td></tr>
+<tr><td><code>sample</code></td><td>Endereço do sample, alinhado em fronteira de 256 bytes (o SGDK alinha automaticamente os resources).</td></tr>
+<tr><td><code>len</code></td><td>Tamanho do sample em bytes, múltiplo de 256 (o SGDK ajusta automaticamente o tamanho do resource).</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_setPCMFast">
+<h4><code>void XGM_setPCMFast(const u8 id, const u8 *sample, const u32 len)</code></h4>
+<p>Versão rápida de <code>XGM_setPCM</code>: assume que o driver XGM já está carregado e que o 68000 já tem acesso ao barramento do Z80.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>id</code></td><td>Id do sample (0 proibido; 1–63 música; 64–255 SFX).</td></tr>
+<tr><td><code>sample</code></td><td>Endereço do sample, alinhado a 256 bytes.</td></tr>
+<tr><td><code>len</code></td><td>Tamanho em bytes, múltiplo de 256.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_setPCM_FAR">
+<h4><code>void XGM_setPCM_FAR(const u8 id, const u8 *sample, const u32 len)</code></h4>
+<p>Igual a <code>XGM_setPCM(..)</code>, mas permite acessar o PCM através de bank switch.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>id</code></td><td>Id do sample.</td></tr>
+<tr><td><code>sample</code></td><td>Endereço do sample (alinhado a 256 bytes).</td></tr>
+<tr><td><code>len</code></td><td>Tamanho em bytes (múltiplo de 256).</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_setPCMFast_FAR">
+<h4><code>void XGM_setPCMFast_FAR(const u8 id, const u8 *sample, const u32 len)</code></h4>
+<p>Igual a <code>XGM_setPCMFast(..)</code>, mas permite acessar o PCM através de bank switch.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>id</code></td><td>Id do sample.</td></tr>
+<tr><td><code>sample</code></td><td>Endereço do sample (alinhado a 256 bytes).</td></tr>
+<tr><td><code>len</code></td><td>Tamanho em bytes (múltiplo de 256).</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_startPlayPCM">
+<h4><code>void XGM_startPlayPCM(const u8 id, const u8 priority, const SoundPCMChannel channel)</code></h4>
+<p>Toca um sample PCM no canal especificado. Se já houver um sample tocando no canal, as prioridades são comparadas e o novo sample substitui o atual quando sua prioridade for maior ou igual. Como a música costuma usar o primeiro canal PCM, prefira os canais 2 a 4 para SFX.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>id</code></td><td>Id do sample (declare antes com <code>XGM_setPCM(..)</code>).</td></tr>
+<tr><td><code>priority</code></td><td>Prioridade de 0 (mínima) a 15 (máxima); decide se o novo SFX substitui o que está tocando (nova &gt;= antiga).</td></tr>
+<tr><td><code>channel</code></td><td>Canal de reprodução: <code>SOUND_PCM_CH1</code> (geralmente usado pela música) a <code>SOUND_PCM_CH4</code>.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_stopPlayPCM">
+<h4><code>void XGM_stopPlayPCM(const SoundPCMChannel channel)</code></h4>
+<p>Para a reprodução PCM no canal especificado. Sem efeito se nada estiver tocando nesse canal.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a parar: <code>SOUND_PCM_CH1</code> a <code>SOUND_PCM_CH4</code>.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_getElapsed">
+<h4><code>u32 XGM_getElapsed(void)</code></h4>
+<p>Retorna o tempo de reprodução decorrido desde a última chamada a <code>XGM_startPlay(..)</code>.</p>
+<p class="returns"><strong>Retorna:</strong> tempo em <em>frames de música</em> (50 ou 60 por segundo conforme a taxa base PAL/NTSC da música).</p>
+</article>
+<article class="fn" id="fn-XGM_getMusicTempo">
+<h4><code>u16 XGM_getMusicTempo(void)</code></h4>
+<p>Obtém o tempo (andamento) atual da música, em ticks por segundo. O valor padrão é 60 (NTSC) ou 50 (PAL). Só tem significado no modo de sincronização automática (o padrão — veja <code>XGM_setManualSync()</code>).</p>
+<p class="returns"><strong>Retorna:</strong> tempo atual em ticks por segundo.</p>
+<p class="note">Usar um tempo diferente de 50/60 afeta o desempenho da proteção de DMA e do parsing de comandos externos; recomenda-se manter o padrão.</p>
+</article>
+<article class="fn" id="fn-XGM_setMusicTempo">
+<h4><code>void XGM_setMusicTempo(const u16 value)</code></h4>
+<p>Define o tempo da música em ticks por segundo (padrão: 60 em NTSC, 50 em PAL). Só tem efeito no modo de sincronização automática.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Novo tempo em ticks por segundo.</td></tr></table>
+<p class="note">Um tempo fora do padrão pode distorcer completamente o som dos instrumentos FM, além de afetar a proteção de DMA e o parsing de comandos.</p>
+</article>
+<article class="fn" id="fn-XGM_getManualSync">
+<h4><code>u16 XGM_getManualSync(void)</code></h4>
+<p>Retorna o estado do modo de sincronização manual do driver XGM (por padrão a sincronização automática é usada).</p>
+<p class="returns"><strong>Retorna:</strong> estado do modo de sync manual (<code>TRUE</code>/<code>FALSE</code>).</p>
+</article>
+<article class="fn" id="fn-XGM_setManualSync">
+<h4><code>void XGM_setManualSync(const bool value)</code></h4>
+<p>Ativa/desativa o modo de sincronização manual do driver XGM (por padrão é automático). No modo manual, você deve chamar <code>XGM_nextFrame()</code> a cada frame.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td><code>TRUE</code> para sincronização manual, <code>FALSE</code> para automática.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_nextFrame">
+<h4><code>XGM_nextFrame()</code> <em>(macro = <code>XGM_nextXFrame(1)</code>)</em></h4>
+<p>Notifica o Z80 de que um novo frame ocorreu. A sincronização de som era originalmente feita 100% pelo Z80 via V-Int, mas se o Z80 estiver parado exatamente nesse instante (bus request do 68000 ou stall por DMA), a interrupção pode ser perdida e o timing da música afetado; por isso o timing passou a ser controlado pelo 68000. Por padrão o SGDK chama este método automaticamente na V-Int, mas você pode assumir o controle com <code>XGM_setManualSync(..)</code> — nesse caso chame uma vez por frame (no callback de V-Int, por exemplo), podendo variar as chamadas para acelerar/desacelerar a música.</p>
+<p class="note">É melhor chamar este método um pouco antes (3/4 scanlines) das operações de DMA, para melhor proteção contra contenção do barramento principal (veja <code>XGM_set68KBUSProtection()</code> e <code>XGM_setForceDelayDMA()</code>).</p>
+</article>
+<article class="fn" id="fn-XGM_nextXFrame">
+<h4><code>void XGM_nextXFrame(const u16 num)</code></h4>
+<p>Igual a <code>XGM_nextFrame()</code>, mas permite indicar o número de frames a avançar.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>num</code></td><td>Número de frames a notificar ao driver.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_setLoopNumber">
+<h4><code>void XGM_setLoopNumber(const s8 value)</code></h4>
+<p>Define o número de repetições para músicas com comando de loop. O padrão é -1, que produz loops "pseudo-infinitos" (255 repetições). Valor 0 significa tocar uma única vez sem loop, 1 = uma execução + 1 loop, e assim por diante.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Número de loops (-1 = pseudo-infinito, 0 = sem loop, 1 = 1 loop, ...).</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_set68KBUSProtection">
+<h4><code>void XGM_set68KBUSProtection(const bool value)</code></h4>
+<p>Idêntico a <code>Z80_setBusProtection(..)</code> (versão genérica do método): sinaliza ao driver que ele deve evitar acessar o barramento principal (durante DMA, por exemplo).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td><code>TRUE</code> para ativar a proteção, <code>FALSE</code> para desativar.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_getForceDelayDMA">
+<h4><code>bool XGM_getForceDelayDMA(void)</code></h4>
+<p>Idêntico a <code>Z80_getForceDelayDMA()</code> (versão genérica do método).</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o atraso forçado de DMA está habilitado.</p>
+</article>
+<article class="fn" id="fn-XGM_setForceDelayDMA">
+<h4><code>void XGM_setForceDelayDMA(const bool value)</code></h4>
+<p>Idêntico a <code>Z80_setForceDelayDMA(..)</code> (versão genérica do método): atrasa levemente a execução da fila de DMA para dar tempo ao Z80 de acessar o barramento e preservar o playback de PCM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td><code>TRUE</code> ou <code>FALSE</code>.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM_getCPULoad">
+<h4><code>u32 XGM_getCPULoad(void)</code></h4>
+<p>Retorna uma estimativa da carga da CPU Z80 com o driver XGM. Os 16 bits baixos trazem a carga estimada do Z80; os 16 bits altos trazem a parcela gasta esperando na contenção de DMA (veja <code>XGM_set68KBUSProtection</code>). O cálculo é uma média sobre 32 frames, portanto chame a cada frame (na V-Int, por exemplo) para obter um valor significativo.</p>
+<p class="returns"><strong>Retorna:</strong> carga do Z80 (bits 0–15) e tempo de espera de DMA (bits 16–31).</p>
+<p class="note">Mede apenas o parsing da música XGM (a mixagem PCM está sempre ativa). Uso ocioso é ~40% em NTSC e ~30% em PAL; 100% normalmente indica overrun, podendo causar lentidão na música e falhas no PCM.</p>
+</article>
+</section>
+<section class="module" id="mod-xgm2">
+<h2>xgm2.h <span class="subtitle">Driver de música XGM2 (segunda geração)</span></h2>
+<p class="mod-desc">O XGM2 é a segunda geração do driver de música do SGDK e a opção recomendada para projetos novos. Assim como o XGM, roda no Z80 e toca músicas VGM/XGM2 controlando o YM2612 (FM) e o PSG, mas traz vários avanços: <strong>3 canais PCM a 13,3 kHz ou 6,65 kHz</strong> (meia taxa), <strong>controle de envelope/volume separado para FM e PSG</strong> (permitindo fades nativos de música), SFX por PCM com <strong>16 níveis de prioridade</strong>, suporte a <strong>blobs multi-faixa</strong> (várias músicas em um único resource, via <code>XGM2_load</code> + <code>XGM2_playTrack</code>) e <strong>proteção reforçada contra contenção de DMA</strong>. O tradeoff frente ao XGM é um canal PCM a menos (3 em vez de 4) e taxa de PCM um pouco menor (13,3 vs 14 kHz), compensados pelos recursos de fade, volume e melhor robustez. Diferente do XGM, os SFX PCM são tocados diretamente por endereço/tamanho do sample, sem registro prévio de ids.</p>
+<article class="fn" id="fn-XGM2_loadDriver">
+<h4><code>void XGM2_loadDriver(bool waitReady)</code></h4>
+<p>Carrega o driver de som XGM2 no Z80.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>waitReady</code></td><td>Se <code>TRUE</code>, aguarda o driver ficar pronto antes de retornar.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_isPlaying">
+<h4><code>bool XGM2_isPlaying(void)</code></h4>
+<p>Informa se há música em reprodução no driver XGM2.</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se uma música está tocando.</p>
+</article>
+<article class="fn" id="fn-XGM2_load">
+<h4><code>void XGM2_load(const u8 *song)</code></h4>
+<p>Carrega o blob de música XGM2 especificado (prepara para reprodução; útil para blobs XGM2 com várias faixas).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>song</code></td><td>Endereço do blob de música XGM2.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_load_FAR">
+<h4><code>void XGM2_load_FAR(const u8 *song, const u32 len)</code></h4>
+<p>Igual a <code>XGM2_load(..)</code>, mas suporta acesso através de bank switch.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>song</code></td><td>Endereço do blob de música XGM2.</td></tr>
+<tr><td><code>len</code></td><td>Tamanho do blob em bytes.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_playTrack">
+<h4><code>void XGM2_playTrack(const u16 track)</code></h4>
+<p>Inicia a reprodução da faixa indicada (é necessário chamar <code>XGM2_load(..)</code> antes).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>track</code></td><td>Índice da faixa (para blobs XGM2 multi-faixa).</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_play">
+<h4><code>void XGM2_play(const u8* song)</code></h4>
+<p>Inicia diretamente a reprodução do blob XGM2 especificado (atalho rápido para blob de faixa única).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>song</code></td><td>Endereço da faixa XGM2.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_play_FAR">
+<h4><code>void XGM2_play_FAR(const u8* song, const u32 len)</code></h4>
+<p>Igual a <code>XGM2_play(..)</code>, mas suporta músicas acessíveis através de bank switch.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>song</code></td><td>Endereço da faixa XGM2.</td></tr>
+<tr><td><code>len</code></td><td>Tamanho da faixa em bytes.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_stop">
+<h4><code>void XGM2_stop(void)</code></h4>
+<p>Para a reprodução da música (não pode ser retomada; para retomar depois, use <code>XGM2_pause()</code>).</p>
+</article>
+<article class="fn" id="fn-XGM2_pause">
+<h4><code>void XGM2_pause(void)</code></h4>
+<p>Pausa a música em reprodução; retome com <code>XGM2_resume()</code>.</p>
+<p class="note">Pela natureza da síntese FM, a retomada nunca é perfeita e algumas notas ficam ausentes até o próximo evento de key-on.</p>
+</article>
+<article class="fn" id="fn-XGM2_resume">
+<h4><code>void XGM2_resume(void)</code></h4>
+<p>Retoma a reprodução da música após uma pausa.</p>
+<p class="note">Pela natureza da síntese FM, a retomada nunca é perfeita e algumas notas ficam ausentes até o próximo evento de key-on.</p>
+</article>
+<article class="fn" id="fn-XGM2_isPlayingPCM">
+<h4><code>u8 XGM2_isPlayingPCM(const u16 channel_mask)</code></h4>
+<p>Retorna o estado de reprodução dos canais PCM especificados.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel_mask</code></td><td>Máscara dos canais a consultar (<code>SOUND_PCM_CH1_MSK</code>, <code>SOUND_PCM_CH2_MSK</code>, <code>SOUND_PCM_CH3_MSK</code>); combine com OR para consultar vários canais de uma vez.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> máscara dos canais tocando no momento (ex.: <code>SOUND_PCM_CH1_MSK | SOUND_PCM_CH3_MSK</code> se os canais 1 e 3 estiverem ativos).</p>
+</article>
+<article class="fn" id="fn-XGM2_playPCM">
+<h4><code>bool XGM2_playPCM(const u8 *sample, const u32 len, const SoundPCMChannel channel)</code></h4>
+<p>Toca um sample PCM no canal especificado. Usa prioridade padrão 6, abaixo da prioridade mínima de PCM da música (7) — ou seja, não interrompe o PCM da trilha sonora.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sample</code></td><td>Endereço do sample, alinhado a 256 bytes (o SGDK alinha o resource WAV automaticamente).</td></tr>
+<tr><td><code>len</code></td><td>Tamanho em bytes, múltiplo de 256 (ajustado automaticamente pelo SGDK).</td></tr>
+<tr><td><code>channel</code></td><td><code>SOUND_PCM_CH_AUTO</code> = seleção automática conforme uso atual; <code>SOUND_PCM_CH1</code> (geralmente usado pela música) a <code>SOUND_PCM_CH3</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se não há canal disponível para tocar o PCM, <code>TRUE</code> caso contrário.</p>
+</article>
+<article class="fn" id="fn-XGM2_playPCMEx">
+<h4><code>bool XGM2_playPCMEx(const u8 *sample, const u32 len, const SoundPCMChannel channel, const u8 priority, const bool halfRate, const bool loop)</code></h4>
+<p>Versão estendida de <code>XGM2_playPCM</code>: toca um sample PCM com controle de prioridade, taxa e loop. Se já houver sample no canal, a prioridade decide a substituição. Como a música pode usar o primeiro canal PCM, prefira os demais para SFX.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sample</code></td><td>Endereço do sample, alinhado a 256 bytes.</td></tr>
+<tr><td><code>len</code></td><td>Tamanho em bytes, múltiplo de 256.</td></tr>
+<tr><td><code>channel</code></td><td><code>SOUND_PCM_CH_AUTO</code> ou <code>SOUND_PCM_CH1</code> a <code>SOUND_PCM_CH3</code>.</td></tr>
+<tr><td><code>priority</code></td><td>0 (mínima) a 15 (máxima); a prioridade do PCM da música é 7 ou 15. O novo SFX substitui o atual se nova &gt;= antiga.</td></tr>
+<tr><td><code>halfRate</code></td><td><code>TRUE</code> para tocar a meia taxa (6,65 kHz) em vez dos 13,3 kHz padrão.</td></tr>
+<tr><td><code>loop</code></td><td><code>TRUE</code> para reprodução em loop.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se não há canal disponível, <code>TRUE</code> caso contrário.</p>
+</article>
+<article class="fn" id="fn-XGM2_stopPCM">
+<h4><code>void XGM2_stopPCM(const SoundPCMChannel channel)</code></h4>
+<p>Para a reprodução PCM no canal especificado. Sem efeito se nada estiver tocando nesse canal.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a parar: <code>SOUND_PCM_CH1</code>, <code>SOUND_PCM_CH2</code> ou <code>SOUND_PCM_CH3</code>.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_isProcessingFade">
+<h4><code>bool XGM2_isProcessingFade(void)</code></h4>
+<p>Consulta se há um efeito de fade de volume em andamento.</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se um fade está sendo processado, <code>FALSE</code> caso contrário.</p>
+</article>
+<article class="fn" id="fn-XGM2_fadeIn">
+<h4><code>void XGM2_fadeIn(const u16 numFrame)</code></h4>
+<p>Processa um efeito de "fade-in" de volume da música: aumenta gradualmente o volume de FM e PSG a partir de 0 até os níveis atuais. Deve ser chamado logo após um comando de "start play" ou "resume".</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade-in em número de frames.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_fadeOut">
+<h4><code>void XGM2_fadeOut(const u16 numFrame)</code></h4>
+<p>Processa um efeito de "fade-out": diminui gradualmente o volume de FM e PSG dos níveis atuais até 0.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade-out em número de frames.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_fadeOutAndStop">
+<h4><code>void XGM2_fadeOutAndStop(const u16 numFrame)</code></h4>
+<p>Processa um "fade-out" e para: diminui gradualmente o volume de FM e PSG até 0 e então emite um comando de 'stop play'.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade-out em número de frames.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_fadeOutAndPause">
+<h4><code>void XGM2_fadeOutAndPause(const u16 numFrame)</code></h4>
+<p>Processa um "fade-out" e pausa: diminui gradualmente o volume de FM e PSG até 0 e então pausa a reprodução (que pode ser retomada com <code>XGM2_resume()</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade-out em número de frames.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_fadeTo">
+<h4><code>void XGM2_fadeTo(const u16 fmVolume, const u16 psgVolume, const u16 numFrame)</code></h4>
+<p>Processa um fade de volume específico: muda gradualmente os volumes de FM e PSG dos níveis atuais até os níveis indicados.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fmVolume</code></td><td>Volume FM a alcançar ao final do fade.</td></tr>
+<tr><td><code>psgVolume</code></td><td>Volume PSG a alcançar ao final do fade.</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em número de frames.</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_setLoopNumber">
+<h4><code>void XGM2_setLoopNumber(const s8 value)</code></h4>
+<p>Define o número de repetições para músicas com comando de loop. O padrão é -1, para loops "pseudo-infinitos" (255 repetições). 0 = tocar uma vez sem loop, 1 = uma execução + 1 loop, etc.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Número de loops (-1 = pseudo-infinito, 0 = sem loop, 1 = 1 loop, ...).</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_getElapsed">
+<h4><code>u32 XGM2_getElapsed(void)</code></h4>
+<p>Retorna o tempo de reprodução decorrido desde a última chamada a <code>XGM2_play(..)</code>.</p>
+<p class="returns"><strong>Retorna:</strong> tempo em frames de música (50 ou 60 por segundo conforme a taxa base PAL/NTSC da música).</p>
+</article>
+<article class="fn" id="fn-XGM2_getMusicTempo">
+<h4><code>u16 XGM2_getMusicTempo(void)</code></h4>
+<p>Obtém o tempo (andamento) atual da música em ticks por segundo. Padrão: 60 (NTSC) ou 50 (PAL). Significativo apenas no modo de sincronização automática (o padrão).</p>
+<p class="returns"><strong>Retorna:</strong> tempo atual em ticks por segundo.</p>
+<p class="note">Tempos diferentes de 50/60 afetam o desempenho da proteção de DMA e do parsing de comandos externos; recomenda-se manter o padrão.</p>
+</article>
+<article class="fn" id="fn-XGM2_setMusicTempo">
+<h4><code>void XGM2_setMusicTempo(const u16 value)</code></h4>
+<p>Define o tempo da música em ticks por segundo (padrão: 60 em NTSC, 50 em PAL). Significativo apenas no modo de sincronização automática.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Novo tempo em ticks por segundo.</td></tr></table>
+<p class="note">Um tempo fora do padrão pode distorcer completamente os instrumentos FM e afetar a proteção de DMA e o parsing de comandos.</p>
+</article>
+<article class="fn" id="fn-XGM2_setFMVolume">
+<h4><code>void XGM2_setFMVolume(const u16 value)</code></h4>
+<p>Define o nível de volume da parte FM da música.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Nível de volume (0 a 100).</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_setPSGVolume">
+<h4><code>void XGM2_setPSGVolume(const u16 value)</code></h4>
+<p>Define o nível de volume da parte PSG da música.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Nível de volume (0 a 100).</td></tr></table>
+</article>
+<article class="fn" id="fn-XGM2_isPAL">
+<h4><code>bool XGM2_isPAL(const u8 *xgm2)</code></h4>
+<p>Verifica se o blob XGM2 indicado usa timing PAL (50 Hz).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>xgm2</code></td><td>Endereço do blob XGM2 a inspecionar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se a música usa timing PAL.</p>
+</article>
+<article class="fn" id="fn-XGM2_getCPULoad">
+<h4><code>u16 XGM2_getCPULoad(const bool mean)</code></h4>
+<p>Retorna uma estimativa da carga da CPU Z80 com o driver XGM2.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>mean</code></td><td><code>TRUE</code> = média calculada sobre os últimos 8 frames; <code>FALSE</code> = carga instantânea do último frame.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> estimativa de carga do Z80.</p>
+</article>
+<article class="fn" id="fn-XGM2_getDMAWaitTime">
+<h4><code>u16 XGM2_getDMAWaitTime(const bool mean)</code></h4>
+<p>Retorna uma estimativa do tempo de CPU do Z80 gasto esperando a conclusão de DMA (veja <code>Z80_setBusProtection(bool)</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>mean</code></td><td><code>TRUE</code> = média sobre os últimos 8 frames; <code>FALSE</code> = espera instantânea do último frame.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> estimativa do tempo de espera por DMA.</p>
+</article>
+<article class="fn" id="fn-XGM2_getDebugFrameCounter">
+<h4><code>u16 XGM2_getDebugFrameCounter(void)</code></h4>
+<p>Retorna o contador interno de frames (número de processos de v-int). Função de debug para verificar se o driver está operando de forma ótima.</p>
+<p class="returns"><strong>Retorna:</strong> valor do contador interno de frames.</p>
+</article>
+<article class="fn" id="fn-XGM2_getDebugPCMRate">
+<h4><code>u16 XGM2_getDebugPCMRate(void)</code></h4>
+<p>Retorna a taxa real de reprodução PCM do driver XGM2. Função de debug para verificar se o driver está operando de forma ótima.</p>
+<p class="returns"><strong>Retorna:</strong> taxa de playback PCM efetiva.</p>
+</article>
+<article class="fn" id="fn-XGM2_getDebugMissedFrames">
+<h4><code>u8 XGM2_getDebugMissedFrames(void)</code></h4>
+<p>Retorna o número de frames perdidos desde o último comando de start play. Função de debug para verificar se o driver está operando de forma ótima.</p>
+<p class="returns"><strong>Retorna:</strong> número de frames perdidos.</p>
+</article>
+<article class="fn" id="fn-XGM2_getDebugProcessDuration">
+<h4><code>u8 XGM2_getDebugProcessDuration(const u16 ind)</code></h4>
+<p>Retorna o instante de término (em número de samples) do processo de v-int especificado. Função de debug para verificar se o driver está operando de forma ótima.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ind</code></td><td>Índice do processo de v-int a consultar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> duração/instante de término em número de samples.</p>
+</article>
+</section>
+<section class="module" id="mod-snd-pcm">
+<h2>snd_pcm.h <span class="subtitle">Driver PCM de canal único (Z80_DRIVER_PCM)</span></h2>
+<p class="mod-desc">API do driver <strong>Z80_DRIVER_PCM</strong>: um reprodutor de <strong>um único canal PCM</strong> de samples 8 bits com sinal, tocados pelo DAC do YM2612 sob controle do Z80. É o driver de sample mais simples e o único com <strong>taxa variável</strong>, de 8 kHz até 32 kHz — a maior qualidade de playback entre os drivers do SGDK. O tradeoff: nada de música e apenas um sample por vez, com controle de panning e loop. Use-o quando precisar apenas de reprodução de samples de alta qualidade (jingles, vozes, efeitos isolados). Note que os drivers de som do SGDK podem não atender todas as necessidades; existem drivers alternativos da comunidade (veja o readme.md do SGDK).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>SOUND_RATE_32000</code> … <code>SOUND_RATE_8000</code></td><td><code>_Pragma(erro)</code></td><td>Nomes antigos das taxas, obsoletos; geram erro de compilação indicando os equivalentes <code>SOUND_PCM_RATE_*</code>.</td></tr>
+<tr><td><code>SND_isPlaying_PCM</code>, <code>SND_startPlay_PCM</code>, <code>SND_stopPlay_PCM</code></td><td><code>_Pragma(erro)</code></td><td>Macros obsoletas da API antiga; usar <code>SND_PCM_isPlaying</code>, <code>SND_PCM_startPlay</code> e <code>SND_PCM_stopPlay</code>.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-SoundPcmSampleRate">
+<h4><code>SoundPcmSampleRate</code></h4>
+<p>Enum com as taxas de amostragem PCM suportadas pelo driver de canal único.</p>
+<pre class="code">typedef enum
+{
+    SOUND_PCM_RATE_32000,   // melhor qualidade, mas ocupa muito espaço de ROM
+    SOUND_PCM_RATE_22050,   // 22,05 kHz
+    SOUND_PCM_RATE_16000,   // 16 kHz
+    SOUND_PCM_RATE_13400,   // 13,4 kHz
+    SOUND_PCM_RATE_11025,   // 11,025 kHz
+    SOUND_PCM_RATE_8000     // pior qualidade, mas ocupa menos ROM
+} SoundPcmSampleRate;</pre>
+</article>
+</div>
+<article class="fn" id="fn-SND_PCM_loadDriver">
+<h4><code>void SND_PCM_loadDriver(const bool waitReady)</code></h4>
+<p>Carrega o driver de som Z80_DRIVER_PCM no Z80.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>waitReady</code></td><td>Se <code>TRUE</code>, aguarda o driver ficar pronto antes de retornar.</td></tr></table>
+</article>
+<article class="fn" id="fn-SND_PCM_isPlaying">
+<h4><code>bool SND_PCM_isPlaying(void)</code></h4>
+<p>Retorna o estado de reprodução do driver PCM de canal único.</p>
+<p class="returns"><strong>Retorna:</strong> valor diferente de zero se um sample está tocando no momento.</p>
+</article>
+<article class="fn" id="fn-SND_PCM_startPlay">
+<h4><code>void SND_PCM_startPlay(const u8 *sample, const u32 len, const SoundPcmSampleRate rate, const SoundPanning pan, const bool loop)</code></h4>
+<p>Inicia a reprodução de um sample (driver PCM de canal único). Se outro sample estiver tocando, ele é interrompido e o novo é tocado no lugar.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sample</code></td><td>Endereço do sample, alinhado a 256 bytes (o SGDK alinha o resource automaticamente).</td></tr>
+<tr><td><code>len</code></td><td>Tamanho em bytes, múltiplo de 256 (ajustado automaticamente pelo SGDK).</td></tr>
+<tr><td><code>rate</code></td><td>Taxa de reprodução: <code>SOUND_PCM_RATE_32000</code> (melhor qualidade, mais ROM) até <code>SOUND_PCM_RATE_8000</code> (pior qualidade, menos ROM).</td></tr>
+<tr><td><code>pan</code></td><td>Panning: <code>SOUND_PAN_NONE</code> (mudo), <code>SOUND_PAN_LEFT</code>, <code>SOUND_PAN_RIGHT</code> ou <code>SOUND_PAN_CENTER</code>.</td></tr>
+<tr><td><code>loop</code></td><td>Se <code>TRUE</code>, o sample toca em loop; senão, apenas uma vez.</td></tr></table>
+</article>
+<article class="fn" id="fn-SND_PCM_stopPlay">
+<h4><code>void SND_PCM_stopPlay(void)</code></h4>
+<p>Para a reprodução (driver PCM de canal único). Sem efeito se nenhum sample estiver tocando.</p>
+</article>
+</section>
+<section class="module" id="mod-snd-pcm4">
+<h2>snd_pcm4.h <span class="subtitle">Driver PCM de 4 canais com volume (Z80_DRIVER_PCM4)</span></h2>
+<p class="mod-desc">API do driver <strong>Z80_DRIVER_PCM4</strong>: mixa até <strong>4 samples PCM de 8 bits com sinal</strong> a uma taxa fixa de <strong>16 kHz</strong>, com controle de volume por canal (<strong>16 níveis</strong>, limitação de memória do Z80). Endereço e tamanho dos samples devem estar em fronteira de 256 bytes. O driver aplica "cutoff" (saturação) na mixagem, permitindo usar samples 8 bits verdadeiros sem estouro. Tradeoff frente aos demais: mais canais de sample que o driver PCM simples e com volume, porém taxa fixa (16 kHz) e sem reprodução de música — se precisar de música + SFX, prefira XGM/XGM2. Note que drivers alternativos da comunidade existem caso os do SGDK não atendam (veja o readme.md do SGDK).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>SND_isPlaying_4PCM_ENV</code>, <code>SND_startPlay_4PCM_ENV</code>, <code>SND_stopPlay_4PCM_ENV</code>, <code>SND_getVolume_4PCM_ENV</code>, <code>SND_setVolume_4PCM_ENV</code>, <code>SND_isPlaying_4PCM</code>, <code>SND_startPlay_4PCM</code>, <code>SND_stopPlay_4PCM</code>, <code>SND_getVolume_4PCM</code>, <code>SND_setVolume_4PCM</code></td><td><code>_Pragma(erro)</code></td><td>Macros obsoletas das APIs antigas (4PCM e 4PCM_ENV); geram erro de compilação apontando as funções <code>SND_PCM4_*</code> equivalentes.</td></tr>
+</table>
+</div>
+<article class="fn" id="fn-SND_PCM4_loadDriver">
+<h4><code>void SND_PCM4_loadDriver(const bool waitReady)</code></h4>
+<p>Carrega o driver de som Z80_DRIVER_PCM4 no Z80.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>waitReady</code></td><td>Se <code>TRUE</code>, aguarda o driver ficar pronto antes de retornar.</td></tr></table>
+</article>
+<article class="fn" id="fn-SND_PCM4_isPlaying">
+<h4><code>bool SND_PCM4_isPlaying(const u16 channel_mask)</code></h4>
+<p>Retorna o estado de reprodução dos canais especificados (driver PCM de 4 canais).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel_mask</code></td><td>Máscara dos canais a consultar (<code>SOUND_PCM_CH1_MSK</code> … <code>SOUND_PCM_CH4_MSK</code>); combine com OR para consultar vários canais de uma vez, ex.: <code>SND_PCM4_isPlaying(SOUND_PCM_CH1_MSK | SOUND_PCM_CH2_MSK)</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o(s) canal(is) especificado(s) está(ão) tocando.</p>
+</article>
+<article class="fn" id="fn-SND_PCM4_startPlay">
+<h4><code>void SND_PCM4_startPlay(const u8 *sample, const u32 len, const SoundPCMChannel channel, const bool loop)</code></h4>
+<p>Inicia a reprodução de um sample no canal especificado (driver PCM de 4 canais). Se já houver sample nesse canal, ele é interrompido e o novo é tocado no lugar.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sample</code></td><td>Endereço do sample, alinhado a 256 bytes (o SGDK alinha o resource automaticamente).</td></tr>
+<tr><td><code>len</code></td><td>Tamanho em bytes, múltiplo de 256 (ajustado automaticamente pelo SGDK).</td></tr>
+<tr><td><code>channel</code></td><td><code>SOUND_PCM_CH_AUTO</code> = seleção automática conforme uso atual; ou <code>SOUND_PCM_CH1</code> a <code>SOUND_PCM_CH4</code>.</td></tr>
+<tr><td><code>loop</code></td><td>Se <code>TRUE</code>, o sample toca em loop; senão, apenas uma vez.</td></tr></table>
+</article>
+<article class="fn" id="fn-SND_PCM4_stopPlay">
+<h4><code>void SND_PCM4_stopPlay(const SoundPCMChannel channel)</code></h4>
+<p>Para a reprodução no canal especificado (driver PCM de 4 canais). Sem efeito se nada estiver tocando nesse canal.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a parar: <code>SOUND_PCM_CH1</code> a <code>SOUND_PCM_CH4</code>.</td></tr></table>
+</article>
+<article class="fn" id="fn-SND_PCM4_setVolume">
+<h4><code>void SND_PCM4_setVolume(const SoundPCMChannel channel, const u8 volume)</code></h4>
+<p>Altera o envelope/volume do canal especificado (driver PCM de 4 canais).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a ajustar: <code>SOUND_PCM_CH1</code> a <code>SOUND_PCM_CH4</code>.</td></tr>
+<tr><td><code>volume</code></td><td>Volume a definir: 16 níveis possíveis, de 0 (mínimo) a 15 (máximo).</td></tr></table>
+</article>
+<article class="fn" id="fn-SND_PCM4_getVolume">
+<h4><code>u8 SND_PCM4_getVolume(const SoundPCMChannel channel)</code></h4>
+<p>Retorna o nível de envelope/volume do canal especificado (driver PCM de 4 canais).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a consultar: <code>SOUND_PCM_CH1</code> a <code>SOUND_PCM_CH4</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> envelope do canal, entre 0 (silencioso) e 15 (alto).</p>
+</article>
+</section>
+<section class="module" id="mod-snd-dpcm2">
+<h2>snd_dpcm2.h <span class="subtitle">Driver DPCM de 2 canais (Z80_DRIVER_DPCM2)</span></h2>
+<p class="mod-desc">API do driver <strong>Z80_DRIVER_DPCM2</strong>: mixa até <strong>2 samples DPCM de 4 bits</strong> a uma taxa fixa de <strong>22050 Hz</strong>. O DPCM (PCM diferencial) armazena deltas de 4 bits em vez de amostras de 8 bits, ocupando metade do espaço em ROM — o tradeoff é alguma perda de fidelidade (o formato diferencial não reproduz bem transições bruscas). Endereço e tamanho dos samples devem estar em fronteira de 128 bytes (o SGDK ajusta os resources automaticamente). Use-o quando quiser 2 canais de sample a taxa razoável gastando pouca ROM, sem necessidade de música. Drivers alternativos da comunidade existem caso os do SGDK não atendam (veja o readme.md do SGDK).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>SND_isPlaying_2ADPCM</code>, <code>SND_startPlay_2ADPCM</code>, <code>SND_stopPlay_2ADPCM</code></td><td><code>_Pragma(erro)</code></td><td>Macros obsoletas da API antiga (2ADPCM); geram erro de compilação apontando as funções <code>SND_DPCM2_*</code> equivalentes.</td></tr>
+</table>
+</div>
+<article class="fn" id="fn-SND_DPCM2_loadDriver">
+<h4><code>void SND_DPCM2_loadDriver(const bool waitReady)</code></h4>
+<p>Carrega o driver de som Z80_DRIVER_DPCM2 no Z80.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>waitReady</code></td><td>Se <code>TRUE</code>, aguarda o driver ficar pronto antes de retornar.</td></tr></table>
+</article>
+<article class="fn" id="fn-SND_DPCM2_isPlaying">
+<h4><code>bool SND_DPCM2_isPlaying(const u16 channel_mask)</code></h4>
+<p>Retorna o estado de reprodução dos canais especificados (driver ADPCM de 2 canais).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel_mask</code></td><td>Máscara dos canais a consultar (<code>SOUND_PCM_CH1_MSK</code>, <code>SOUND_PCM_CH2_MSK</code>); combine com OR para consultar os dois canais de uma vez.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o(s) canal(is) especificado(s) está(ão) tocando.</p>
+</article>
+<article class="fn" id="fn-SND_DPCM2_startPlay">
+<h4><code>void SND_DPCM2_startPlay(const u8 *sample, const u32 len, const SoundPCMChannel channel, const bool loop)</code></h4>
+<p>Inicia a reprodução de um sample no canal especificado (driver ADPCM de 2 canais). Se já houver sample nesse canal, ele é interrompido e o novo é tocado no lugar.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sample</code></td><td>Endereço do sample, alinhado a 128 bytes (o SGDK alinha o resource automaticamente).</td></tr>
+<tr><td><code>len</code></td><td>Tamanho em bytes, múltiplo de 128 (ajustado automaticamente pelo SGDK).</td></tr>
+<tr><td><code>channel</code></td><td><code>SOUND_PCM_CH_AUTO</code> = seleção automática conforme uso atual; ou <code>SOUND_PCM_CH1</code> / <code>SOUND_PCM_CH2</code>.</td></tr>
+<tr><td><code>loop</code></td><td>Se <code>TRUE</code>, o sample toca em loop; senão, apenas uma vez.</td></tr></table>
+</article>
+<article class="fn" id="fn-SND_DPCM2_stopPlay">
+<h4><code>void SND_DPCM2_stopPlay(const SoundPCMChannel channel)</code></h4>
+<p>Para a reprodução no canal especificado (driver ADPCM de 2 canais). Sem efeito se nada estiver tocando nesse canal.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a parar: <code>SOUND_PCM_CH1</code> ou <code>SOUND_PCM_CH2</code>.</td></tr></table>
+</article>
+</section>
+<section class="module" id="mod-psg">
+<h2>psg.h <span class="subtitle">Acesso direto ao PSG (SN76489)</span></h2>
+<p class="mod-desc">Este módulo dá acesso direto ao <strong>PSG SN76489</strong> através da CPU 68000. O PSG oferece 4 canais: 3 geradores de tom (onda quadrada) e 1 canal de ruído (branco ou periódico), cada um com atenuação de volume em 16 níveis. É o chip "8 bits" herdado do Master System, ideal para efeitos simples (bipes, ruídos, percussão leve) e linhas de acompanhamento. Atenção: use estas funções apenas quando você mesmo controla o PSG — se um driver de música (XGM/XGM2) estiver tocando, ele também escreve no PSG e os acessos vão conflitar. Note a convenção invertida do hardware: no envelope, 0 é o volume máximo e 15 é silêncio (por isso <code>PSG_ENVELOPE_MIN</code> = 15 e <code>PSG_ENVELOPE_MAX</code> = 0).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>PSG_PORT</code></td><td><code>0xC00011</code></td><td>Endereço da porta do PSG (mapeada no espaço do VDP).</td></tr>
+<tr><td><code>PSG_ENVELOPE_MIN</code></td><td><code>15</code></td><td>Valor mínimo de envelope do PSG (atenuação máxima = silêncio).</td></tr>
+<tr><td><code>PSG_ENVELOPE_MAX</code></td><td><code>0</code></td><td>Valor máximo de envelope do PSG (sem atenuação = volume máximo).</td></tr>
+<tr><td><code>PSG_NOISE_TYPE_PERIODIC</code></td><td><code>0</code></td><td>Ruído periódico (soa como um tom de baixa frequência).</td></tr>
+<tr><td><code>PSG_NOISE_TYPE_WHITE</code></td><td><code>1</code></td><td>Ruído branco (chiado).</td></tr>
+<tr><td><code>PSG_NOISE_FREQ_CLOCK2</code></td><td><code>0</code></td><td>Frequência do ruído = clock do PSG / 2 (menos grave).</td></tr>
+<tr><td><code>PSG_NOISE_FREQ_CLOCK4</code></td><td><code>1</code></td><td>Frequência do ruído = clock do PSG / 4.</td></tr>
+<tr><td><code>PSG_NOISE_FREQ_CLOCK8</code></td><td><code>2</code></td><td>Frequência do ruído = clock do PSG / 8 (mais grave).</td></tr>
+<tr><td><code>PSG_NOISE_FREQ_TONE3</code></td><td><code>3</code></td><td>Frequência do ruído controlada pelo gerador de tom nº 3.</td></tr>
+<tr><td><code>PSG_init()</code></td><td><code>_Pragma(erro)</code></td><td>Obsoleto: gera erro de compilação; use <code>PSG_reset()</code>.</td></tr>
+</table>
+</div>
+<article class="fn" id="fn-PSG_reset">
+<h4><code>void PSG_reset(void)</code></h4>
+<p>Reseta o chip PSG (silencia todos os canais e restaura o estado inicial).</p>
+</article>
+<article class="fn" id="fn-PSG_write">
+<h4><code>void PSG_write(u8 data)</code></h4>
+<p>Escreve o valor especificado diretamente na porta de dados do PSG (acesso de baixo nível ao registrador do chip).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Valor a escrever na porta.</td></tr></table>
+</article>
+<article class="fn" id="fn-PSG_setEnvelope">
+<h4><code>void PSG_setEnvelope(u8 channel, u8 value)</code></h4>
+<p>Define o nível de envelope (volume/atenuação) do canal PSG especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a ajustar (0–3).</td></tr>
+<tr><td><code>value</code></td><td>Nível de envelope, de <code>PSG_ENVELOPE_MIN</code> (15, silêncio) a <code>PSG_ENVELOPE_MAX</code> (0, volume máximo).</td></tr></table>
+</article>
+<article class="fn" id="fn-PSG_setTone">
+<h4><code>void PSG_setTone(u8 channel, u16 value)</code></h4>
+<p>Define o valor bruto de tom (período do contador) do canal PSG especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a ajustar (0–3).</td></tr>
+<tr><td><code>value</code></td><td>Valor de tom a definir (0–1023); quanto maior o valor, mais grave o som.</td></tr></table>
+</article>
+<article class="fn" id="fn-PSG_setToneLow">
+<h4><code>void PSG_setToneLow(u8 channel, u8 value)</code></h4>
+<p>Escrita parcial do tom: define apenas os bits baixos (b3–b0) do valor de tom do canal especificado, usando um único byte na porta (útil para vibratos/slides rápidos).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a ajustar (0–3).</td></tr>
+<tr><td><code>value</code></td><td>Parte baixa (b3–b0) do valor de tom (0–15).</td></tr></table>
+</article>
+<article class="fn" id="fn-PSG_setFrequency">
+<h4><code>void PSG_setFrequency(u8 channel, u16 value)</code></h4>
+<p>Define a frequência do canal PSG especificado. O método converte automaticamente a frequência em Hz para o valor de tom correspondente do PSG.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>channel</code></td><td>Canal a ajustar (0–3).</td></tr>
+<tr><td><code>value</code></td><td>Frequência em Hz (0–4095).</td></tr></table>
+</article>
+<article class="fn" id="fn-PSG_setNoise">
+<h4><code>void PSG_setNoise(u8 type, u8 frequency)</code></h4>
+<p>Configura o tipo e a frequência do canal de ruído do PSG.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>type</code></td><td>Tipo de ruído: <code>PSG_NOISE_TYPE_PERIODIC</code> ou <code>PSG_NOISE_TYPE_WHITE</code>.</td></tr>
+<tr><td><code>frequency</code></td><td>Frequência do ruído: <code>PSG_NOISE_FREQ_CLOCK2</code>, <code>PSG_NOISE_FREQ_CLOCK4</code>, <code>PSG_NOISE_FREQ_CLOCK8</code> ou <code>PSG_NOISE_FREQ_TONE3</code>.</td></tr></table>
+</article>
+</section>
+<section class="module" id="mod-ym2612">
+<h2>ym2612.h <span class="subtitle">Acesso direto ao YM2612 (FM)</span></h2>
+<p class="mod-desc">Este módulo dá acesso direto ao <strong>YM2612</strong> — o sintetizador FM do Mega Drive — através da CPU 68000. O chip oferece 6 canais FM de 4 operadores cada; o canal 6 pode ser chaveado para o modo <strong>DAC</strong>, no qual reproduz samples PCM de 8 bits (é assim que todos os drivers PCM/XGM tocam samples). Normalmente é o Z80, via driver de som, quem programa o YM2612; use estas funções apenas para controle manual do chip (síntese própria, players customizados, testes), pois elas conflitam com qualquer driver de música ativo. As escritas exigem respeitar o flag de busy do chip, o que as funções desta API já tratam.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>YM2612_BASEPORT</code></td><td><code>0xA04000</code></td><td>Endereço base das portas do YM2612 no mapa de memória do 68000.</td></tr>
+<tr><td><code>YM2612_writeSafe(port, data)</code></td><td><code>_Pragma(erro)</code></td><td>Obsoleto: gera erro de compilação; use <code>YM2612_write(..)</code>.</td></tr>
+<tr><td><code>YM2612_writeRegSafe(part, reg, data)</code></td><td><code>_Pragma(erro)</code></td><td>Obsoleto: gera erro de compilação; use <code>YM2612_writeReg(..)</code>.</td></tr>
+</table>
+</div>
+<article class="fn" id="fn-YM2612_reset">
+<h4><code>void YM2612_reset(void)</code></h4>
+<p>Reseta o chip YM2612 (silencia e reinicializa todos os canais FM).</p>
+</article>
+<article class="fn" id="fn-YM2612_read">
+<h4><code>u8 YM2612_read(const u16 port)</code></h4>
+<p>Lê uma porta do YM2612. A leitura do YM2612 sempre retorna o status do chip (flags de busy e de timer), qualquer que seja a porta lida.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>port</code></td><td>Número da porta (0–3).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor da porta do YM2612 (status do chip).</p>
+</article>
+<article class="fn" id="fn-YM2612_readStatus">
+<h4><code>u8 YM2612_readStatus()</code></h4>
+<p>Retorna o status do YM2612 (flags de busy e de timer).</p>
+<p class="returns"><strong>Retorna:</strong> byte de status do YM2612.</p>
+</article>
+<article class="fn" id="fn-YM2612_write">
+<h4><code>void YM2612_write(const u16 port, const u8 data)</code></h4>
+<p>Escreve um valor na porta especificada do YM2612.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>port</code></td><td>Número da porta (0–3).</td></tr>
+<tr><td><code>data</code></td><td>Dado a escrever.</td></tr></table>
+</article>
+<article class="fn" id="fn-YM2612_writeReg">
+<h4><code>void YM2612_writeReg(const u16 part, const u8 reg, const u8 data)</code></h4>
+<p>Define o valor de um registrador do YM2612 (seleciona o registrador na porta de endereço da parte e escreve o dado na porta de dados correspondente).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>part</code></td><td>Número da parte (0–1): parte 0 = canais 1–3, parte 1 = canais 4–6.</td></tr>
+<tr><td><code>reg</code></td><td>Número do registrador.</td></tr>
+<tr><td><code>data</code></td><td>Valor do registrador.</td></tr></table>
+</article>
+<article class="fn" id="fn-YM2612_enableDAC">
+<h4><code>void YM2612_enableDAC(void)</code></h4>
+<p>Habilita o DAC do YM2612: o canal FM 6 passa a reproduzir os valores PCM de 8 bits escritos no registrador do DAC.</p>
+</article>
+<article class="fn" id="fn-YM2612_disableDAC">
+<h4><code>void YM2612_disableDAC(void)</code></h4>
+<p>Desabilita o DAC do YM2612: o canal 6 volta a operar como canal FM normal.</p>
+</article>
+</section>
+<section class="module" id="mod-z80-ctrl">
+<h2>z80_ctrl.h <span class="subtitle">Controle da CPU Z80 e gerenciamento de drivers</span></h2>
+<p class="mod-desc">O <strong>Z80</strong> é a CPU secundária do Mega Drive (a mesma do Master System) e, na prática, funciona como processador de som dedicado: ele roda o driver de áudio e comanda o YM2612 e o PSG, liberando o 68000 para o jogo. Este módulo fornece o controle do Z80 a partir do 68000: habilitar/resetar o Z80, requisitar/liberar o barramento (necessário para o 68000 acessar a Z80 RAM de 8 KB), fazer upload/download de dados na memória do Z80, definir o banco externo (janela de 32 KB pela qual o Z80 enxerga o espaço do 68000) e gerenciar drivers (consultar o driver carregado, carregar driver customizado, callback de V-Int). Também expõe os mecanismos de <strong>proteção de barramento</strong> usados pelos drivers para conviver com o DMA: durante um DMA o Z80 pode ficar "congelado" ao acessar o barramento principal, corrompendo o playback de PCM — <code>Z80_setBusProtection</code> e <code>Z80_setForceDelayDMA</code> mitigam isso. Na maioria dos jogos você usará apenas as funções de alto nível dos drivers (XGM2 etc.); este módulo é a fundação de baixo nível sobre a qual eles operam.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>Z80_HALT_PORT</code></td><td><code>0xA11100</code></td><td>Porta de bus request/halt do Z80.</td></tr>
+<tr><td><code>Z80_RESET_PORT</code></td><td><code>0xA11200</code></td><td>Porta de reset do Z80.</td></tr>
+<tr><td><code>Z80_RAM_START</code></td><td><code>0xA00000</code></td><td>Endereço inicial da RAM do Z80 (visto pelo 68000).</td></tr>
+<tr><td><code>Z80_RAM_END</code></td><td><code>0xA01FFF</code></td><td>Endereço final da RAM do Z80.</td></tr>
+<tr><td><code>Z80_RAM</code></td><td><code>Z80_RAM_START</code></td><td>Endereço da RAM do Z80 (alias).</td></tr>
+<tr><td><code>Z80_RAM_LEN</code></td><td><code>0x2000</code></td><td>Tamanho da RAM do Z80 em bytes (8 KB).</td></tr>
+<tr><td><code>Z80_YM2612</code></td><td><code>0xA04000</code></td><td>Endereço da porta do YM2612 (lado Z80).</td></tr>
+<tr><td><code>Z80_BANK_REGISTER</code></td><td><code>0xA06000</code></td><td>Endereço do registrador de banco do Z80.</td></tr>
+<tr><td><code>Z80_DRV_COMMAND</code></td><td><code>0xA00100</code></td><td>Endereço de comando dos drivers padrão do Z80.</td></tr>
+<tr><td><code>Z80_DRV_STATUS</code></td><td><code>0xA00102</code></td><td>Endereço de status dos drivers padrão do Z80.</td></tr>
+<tr><td><code>Z80_DRV_PARAMS</code></td><td><code>0xA00104</code></td><td>Endereço dos parâmetros dos drivers padrão do Z80.</td></tr>
+<tr><td><code>Z80_DRV_COM_PLAY_SFT</code> / <code>Z80_DRV_COM_STOP_SFT</code> / <code>Z80_DRV_STAT_PLAYING_SFT</code> / <code>Z80_DRV_STAT_READY_SFT</code></td><td><code>0 / 4 / 0 / 7</code></td><td>Deslocamentos de bit dos comandos/status padrão do driver.</td></tr>
+<tr><td><code>Z80_DRV_COM_PLAY</code></td><td><code>1 &lt;&lt; 0</code></td><td>Comando "play" do driver padrão.</td></tr>
+<tr><td><code>Z80_DRV_COM_STOP</code></td><td><code>1 &lt;&lt; 4</code></td><td>Comando "stop" do driver padrão.</td></tr>
+<tr><td><code>Z80_DRV_STAT_PLAYING</code></td><td><code>1 &lt;&lt; 0</code></td><td>Bit de status "tocando" do driver padrão.</td></tr>
+<tr><td><code>Z80_DRV_STAT_READY</code></td><td><code>1 &lt;&lt; 7</code></td><td>Bit de status "pronto" do driver padrão.</td></tr>
+<tr><td><code>Z80_DRIVER_NULL</code></td><td><code>0</code></td><td>Driver Z80 nulo (nenhum).</td></tr>
+<tr><td><code>Z80_DRIVER_PCM</code></td><td><code>1</code></td><td>Player de sample com taxa variável (8 bits com sinal, 8–32 kHz).</td></tr>
+<tr><td><code>Z80_DRIVER_DPCM2</code></td><td><code>2</code></td><td>Player PCM de 2 canais (4 bits DPCM, taxa fixa de 22 kHz).</td></tr>
+<tr><td><code>Z80_DRIVER_PCM4</code></td><td><code>3</code></td><td>Player de 4 canais com envelope (8 bits com sinal, 16 kHz, 16 níveis de volume por canal).</td></tr>
+<tr><td><code>Z80_DRIVER_XGM</code></td><td><code>4</code></td><td>Player de música eXtended VGM: toca VGM/XGM, 4 canais PCM a 14 kHz, SFX com 16 níveis de prioridade, projetado para evitar contenção de DMA.</td></tr>
+<tr><td><code>Z80_DRIVER_XGM2</code></td><td><code>5</code></td><td>Player eXtended VGM v2: toca VGM/XGM2, 3 canais PCM a 13,3/6,65 kHz, envelopes FM e PSG, SFX com 16 prioridades e proteção reforçada contra contenção de DMA.</td></tr>
+<tr><td><code>Z80_DRIVER_CUSTOM</code></td><td><code>-1</code></td><td>Driver Z80 customizado (carregado pelo usuário).</td></tr>
+<tr><td><code>Z80_DRV_CH0_SFT</code>…<code>CH3_SFT</code>, <code>Z80_DRV_CH0</code>…<code>CH3</code>, <code>Z80_DRIVER_4PCM_ENV</code>, <code>Z80_DRIVER_2ADPCM</code>, <code>Z80_loadDriver(driver, waitReady)</code></td><td><code>_Pragma(erro)</code></td><td>Definições obsoletas; geram erro de compilação indicando os substitutos (<code>SOUND_PCM_CHx</code>/<code>_MSK</code>, <code>Z80_DRIVER_PCM4</code>, <code>Z80_DRIVER_DPCM2</code>, métodos <code>loadDriver</code> dedicados de cada driver).</td></tr>
+</table>
+</div>
+<article class="fn" id="fn-Z80_init">
+<h4><code>void Z80_init(void)</code></h4>
+<p>Inicializa o subsistema do Z80: requisita o barramento do Z80 e zera o número de banco.</p>
+</article>
+<article class="fn" id="fn-Z80_isBusTaken">
+<h4><code>bool Z80_isBusTaken(void)</code></h4>
+<p>Informa se o barramento do Z80 está atualmente tomado pelo 68000.</p>
+<p class="returns"><strong>Retorna:</strong> estado de posse do barramento do Z80.</p>
+</article>
+<article class="fn" id="fn-Z80_requestBus">
+<h4><code>void Z80_requestBus(bool wait)</code></h4>
+<p>Requisita o barramento do Z80 (necessário antes de o 68000 acessar a Z80 RAM ou o YM2612).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>wait</code></td><td>Se <code>TRUE</code>, espera a operação de bus request completar.</td></tr></table>
+</article>
+<article class="fn" id="fn-Z80_getAndRequestBus">
+<h4><code>bool Z80_getAndRequestBus(bool wait)</code></h4>
+<p>Requisita o barramento do Z80 caso ainda não esteja tomado, informando o estado anterior (útil para restaurar depois).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>wait</code></td><td>Se <code>TRUE</code>, espera a operação de bus request completar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> estado de posse do barramento antes da chamada.</p>
+</article>
+<article class="fn" id="fn-Z80_releaseBus">
+<h4><code>void Z80_releaseBus(void)</code></h4>
+<p>Libera o barramento do Z80, permitindo que ele volte a executar.</p>
+</article>
+<article class="fn" id="fn-Z80_startReset">
+<h4><code>void Z80_startReset(void)</code></h4>
+<p>Inicia o reset do Z80 (coloca a linha de reset em estado ativo).</p>
+</article>
+<article class="fn" id="fn-Z80_endReset">
+<h4><code>void Z80_endReset(void)</code></h4>
+<p>Encerra o reset do Z80 (libera a linha de reset).</p>
+</article>
+<article class="fn" id="fn-Z80_setBank">
+<h4><code>void Z80_setBank(const u16 bank)</code></h4>
+<p>Define o banco de memória externo do Z80 (janela de 32 KB pela qual o Z80 acessa o espaço de endereçamento do 68000).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>bank</code></td><td>Número do banco a definir (0x000–0x1FF).</td></tr></table>
+</article>
+<article class="fn" id="fn-Z80_read">
+<h4><code>u8 Z80_read(const u16 addr)</code></h4>
+<p>Lê um byte da memória do Z80 (Z80_RAM).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>addr</code></td><td>Endereço a ler (relativo ao início da Z80_RAM).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> byte lido.</p>
+<p class="note">É preciso requisitar o barramento do Z80 (<code>Z80_requestBus</code>) antes de acessar a memória do Z80.</p>
+</article>
+<article class="fn" id="fn-Z80_write">
+<h4><code>void Z80_write(const u16 addr, const u8 value)</code></h4>
+<p>Escreve um byte na memória do Z80 (Z80_RAM).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>addr</code></td><td>Endereço a escrever (relativo ao início da Z80_RAM).</td></tr>
+<tr><td><code>value</code></td><td>Valor a escrever.</td></tr></table>
+<p class="note">É preciso requisitar o barramento do Z80 (<code>Z80_requestBus</code>) antes de acessar a memória do Z80.</p>
+</article>
+<article class="fn" id="fn-Z80_clear">
+<h4><code>void Z80_clear(void)</code></h4>
+<p>Limpa (zera) a memória do Z80.</p>
+<p class="note">É preciso requisitar o barramento do Z80 (<code>Z80_requestBus</code>) antes de acessar a memória do Z80.</p>
+</article>
+<article class="fn" id="fn-Z80_upload">
+<h4><code>void Z80_upload(const u16 dest, const u8 *data, const u16 size)</code></h4>
+<p>Envia (upload) dados para a memória do Z80.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>dest</code></td><td>Endereço de destino (memória do Z80).</td></tr>
+<tr><td><code>data</code></td><td>Dados a enviar.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho dos dados em bytes.</td></tr></table>
+</article>
+<article class="fn" id="fn-Z80_download">
+<h4><code>void Z80_download(const u16 from, u8 *dest, const u16 size)</code></h4>
+<p>Lê (download) dados da memória do Z80.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>from</code></td><td>Endereço de origem (memória do Z80).</td></tr>
+<tr><td><code>dest</code></td><td>Destino onde escrever os dados.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho dos dados a ler, em bytes.</td></tr></table>
+</article>
+<article class="fn" id="fn-Z80_getLoadedDriver">
+<h4><code>s16 Z80_getLoadedDriver(void)</code></h4>
+<p>Retorna o driver Z80 atualmente carregado.</p>
+<p class="returns"><strong>Retorna:</strong> um dos valores <code>Z80_DRIVER_NULL</code>, <code>Z80_DRIVER_PCM</code>, <code>Z80_DRIVER_DPCM2</code>, <code>Z80_DRIVER_PCM4</code>, <code>Z80_DRIVER_XGM</code>, <code>Z80_DRIVER_XGM2</code> ou <code>Z80_DRIVER_CUSTOM</code>.</p>
+</article>
+<article class="fn" id="fn-Z80_unloadDriver">
+<h4><code>void Z80_unloadDriver(void)</code></h4>
+<p>Descarrega o driver Z80 atual (carrega o driver NULL).</p>
+</article>
+<article class="fn" id="fn-Z80_loadCustomDriver">
+<h4><code>void Z80_loadCustomDriver(const u8 *drv, u16 size)</code></h4>
+<p>Carrega um driver Z80 customizado (binário fornecido pelo usuário) na memória do Z80.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>drv</code></td><td>Ponteiro para o binário do driver a carregar.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho do binário do driver, em bytes.</td></tr></table>
+</article>
+<article class="fn" id="fn-Z80_isDriverReady">
+<h4><code>bool Z80_isDriverReady(void)</code></h4>
+<p>Retorna o estado de "pronto" do driver (válido apenas para drivers não customizados).</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o driver está pronto.</p>
+</article>
+<article class="fn" id="fn-Z80_getVIntCallback">
+<h4><code>VoidCallback* Z80_getVIntCallback(void)</code></h4>
+<p>Obtém o método de callback de 'interrupção vertical' da tarefa do Z80.</p>
+<p class="returns"><strong>Retorna:</strong> ponteiro do método chamado no período de interrupção vertical, ou <code>NULL</code> se nenhum estiver definido.</p>
+</article>
+<article class="fn" id="fn-Z80_setVIntCallback">
+<h4><code>void Z80_setVIntCallback(VoidCallback* CB)</code></h4>
+<p>Define o callback de 'interrupção vertical' da tarefa do Z80. A interrupção vertical ocorre ao fim do período de exibição, no início do vertical blank. A única coisa que o SGDK sempre trata no callback de v-int é a tarefa do driver de som (tempo da música) ou o reset de fase da engine de Bitmap.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>CB</code></td><td>Ponteiro do método a chamar no período de interrupção vertical; passe <code>NULL</code> para remover o callback atual.</td></tr></table>
+<p class="note">Mantenha o código do callback o mais rápido possível, pois ele consome o precioso tempo de VBlank; e evite tocar no VDP dentro dele, senão você terá de proteger todos os acessos ao VDP feitos no loop principal (o que é penoso).</p>
+</article>
+<article class="fn" id="fn-Z80_useBusProtection">
+<h4><code>void Z80_useBusProtection(u16 signalAddress)</code></h4>
+<p>Habilita/configura a proteção de acesso ao barramento do 68000 a partir do Z80 (pode ser usada por qualquer driver de som).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>signalAddress</code></td><td>Endereço na Z80 RAM (relativo ao início da Z80 RAM) usado como sinal de proteção de barramento: vale 1 quando o barramento principal não deve ser acessado pelo Z80 (DMA em andamento) e 0 caso contrário.</td></tr></table>
+</article>
+<article class="fn" id="fn-Z80_setBusProtection">
+<h4><code>void Z80_setBusProtection(bool value)</code></h4>
+<p>Ativa/desativa a proteção temporária do barramento do 68000 contra acessos do Z80 (para drivers que a suportam). Proteja o barramento durante o DMA e restaure em seguida, ex.: <code>Z80_setBusProtection(TRUE); DMA_doDma(VRAM, data, 0x1000, 0x100, 2); Z80_setBusProtection(FALSE);</code>. Assim o driver de som <em>tenta</em> evitar acessar o barramento do 68000 durante o DMA, evitando interrupção de execução e preservando a qualidade do playback de PCM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td><code>TRUE</code> para proteger, <code>FALSE</code> para liberar.</td></tr></table>
+<p class="note">Dependendo do driver, o sucesso não é 100% garantido e pode falhar em certas condições (carga pesada do Z80, muitos dados de PSG na música XGM). Nesses casos, experimente também <code>Z80_setForceDelayDMA()</code> para melhorar o playback de PCM.</p>
+</article>
+<article class="fn" id="fn-Z80_enableBusProtection">
+<h4><code>void Z80_enableBusProtection()</code></h4>
+<p>Habilita a proteção temporária do barramento do 68000 contra acessos do Z80 (para drivers que a suportam). Veja <code>Z80_setBusProtection(..)</code> para mais informações.</p>
+</article>
+<article class="fn" id="fn-Z80_disableBusProtection">
+<h4><code>void Z80_disableBusProtection()</code></h4>
+<p>Desabilita a proteção temporária do barramento do 68000 contra acessos do Z80 (para drivers que a suportam). Veja <code>Z80_setBusProtection(..)</code> para mais informações.</p>
+</article>
+<article class="fn" id="fn-Z80_getForceDelayDMA">
+<h4><code>bool Z80_getForceDelayDMA(void)</code></h4>
+<p>Informa se o atraso de DMA para melhorar o playback de PCM está habilitado.</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o atraso de DMA está habilitado.</p>
+</article>
+<article class="fn" id="fn-Z80_setForceDelayDMA">
+<h4><code>void Z80_setForceDelayDMA(bool value)</code></h4>
+<p>Melhora o playback de PCM durante a reprodução de música quando a fila de DMA é usada. Mesmo com a proteção de barramento (<code>Z80_setBusProtection</code>) o PCM ainda pode sair alterado — no driver XGM, por exemplo, isso ocorre quando a música contém dados de PSG (o Z80 precisa do barramento principal para acessar o PSG). Ao atrasar um pouco a execução do DMA da fila, o Z80 ganha tempo de acesso ao barramento principal, evitando o stall.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td><code>TRUE</code> ou <code>FALSE</code>.</td></tr></table>
+<p class="note">O atraso é de cerca de 3 scanlines, portanto o force delay DMA reduz a banda de DMA em aproximadamente 3 linhas de vblank.</p>
+</article>
+</section>

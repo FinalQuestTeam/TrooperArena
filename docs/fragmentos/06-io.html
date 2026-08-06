@@ -1,0 +1,912 @@
+<section class="module" id="mod-joy">
+<h2>joy.h <span class="subtitle">Suporte a controles (joypads e periféricos)</span></h2>
+<p class="mod-desc">Este módulo fornece as rotinas de leitura do estado dos controles conectados ao Mega Drive. Os seguintes periféricos são suportados: joypad de <strong>3 botões</strong>, joypad de <strong>6 botões</strong> (X, Y, Z e MODE), <strong>Sega Mouse</strong> (Mega Mouse), adaptador multitap <strong>Sega Team Player</strong> (até 8 joypads com dois adaptadores), <strong>EA 4-Way Play</strong>, as pistolas de luz <strong>Menacer</strong> e <strong>Justifier</strong>, além do pad de <strong>Master System</strong>, do <strong>Sega Trackball</strong> e do <strong>Sega Phaser</strong>.</p>
+<p class="mod-desc">Pad de Master System, trackball e Phaser, embora suportados, não são detectados automaticamente por <code>JOY_init()</code> — é preciso habilitá-los via <code>JOY_setSupport()</code>. As pistolas Menacer e Justifier são reconhecidas automaticamente, mas o suporte só é ativado quando o programador solicita, pois lightguns adicionam overhead extra; assim o SGDK mantém por padrão o estado de menor custo. Já os mouses são habilitados por padrão em <code>JOY_init()</code> e retornam valores emulados de pad, permitindo usar um mouse como controle comum; jogos que precisam de todo o desempenho possível podem detectar e desligar o suporte a mouse. O estado dos controles é atualizado automaticamente a cada V-Blank, e um sistema de eventos (callback) permite reagir a mudanças de estado.</p>
+<div class="defines"><h3>Constantes e macros</h3>
+<table class="def-table"><tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>PORT_1</code> / <code>PORT_2</code></td><td>0x0000 / 0x0001</td><td>Identificadores das portas físicas de controle 1 e 2.</td></tr>
+<tr><td><code>JOY_1</code> .. <code>JOY_8</code></td><td>0x0000 .. 0x0007</td><td>Identificadores lógicos dos joypads 1 a 8 (5 a 8 só existem com adaptadores Team Player).</td></tr>
+<tr><td><code>JOY_NUM</code></td><td>0x0008</td><td>Número máximo de joypads suportados.</td></tr>
+<tr><td><code>JOY_ALL</code></td><td>0xFFFF</td><td>Representa todos os joypads ao mesmo tempo (joypad 1 | 2 | ... | 8).</td></tr>
+<tr><td><code>BUTTON_UP</code> / <code>BUTTON_DOWN</code> / <code>BUTTON_LEFT</code> / <code>BUTTON_RIGHT</code></td><td>0x0001 / 0x0002 / 0x0004 / 0x0008</td><td>Máscaras de bit dos botões direcionais.</td></tr>
+<tr><td><code>BUTTON_A</code> / <code>BUTTON_B</code> / <code>BUTTON_C</code> / <code>BUTTON_START</code></td><td>0x0040 / 0x0010 / 0x0020 / 0x0080</td><td>Máscaras de bit dos botões do pad de 3 botões.</td></tr>
+<tr><td><code>BUTTON_X</code> / <code>BUTTON_Y</code> / <code>BUTTON_Z</code> / <code>BUTTON_MODE</code></td><td>0x0400 / 0x0200 / 0x0100 / 0x0800</td><td>Máscaras de bit dos botões extras do pad de 6 botões.</td></tr>
+<tr><td><code>BUTTON_LMB</code> / <code>BUTTON_MMB</code> / <code>BUTTON_RMB</code></td><td>0x0040 / 0x0010 / 0x0020</td><td>Apelidos (aliases) dos botões A / B / C para os botões esquerdo, do meio e direito do mouse.</td></tr>
+<tr><td><code>BUTTON_DIR</code> / <code>BUTTON_BTN</code> / <code>BUTTON_ALL</code></td><td>0x000F / 0x0FF0 / 0x0FFF</td><td>Máscaras combinadas: qualquer direcional, qualquer botão não-direcional, e todos os botões.</td></tr>
+<tr><td><code>JOY_TYPE_PAD3</code> .. <code>JOY_TYPE_UNKNOWN</code></td><td>0x00 .. 0x0F</td><td>Tipos de periférico por joypad: PAD3 (0x00), PAD6 (0x01), MOUSE (0x02), TRACKBALL (0x03), MENACER (0x04), JUSTIFIER (0x05), PHASER (0x06), UNKNOWN (0x0F).</td></tr>
+<tr><td><code>PORT_TYPE_MENACER</code> .. <code>PORT_TYPE_EA4WAYPLAY</code></td><td>0x00 .. 0x10</td><td>Tipos de periférico por porta física: MENACER (0x00), JUSTIFIER (0x01), MOUSE (0x03), TEAMPLAYER (0x07), PAD (0x0D), UNKNOWN (0x0F), EA4WAYPLAY (0x10). Valores acima de 15 não vêm do método de identificação da Sega.</td></tr>
+<tr><td><code>JOY_SUPPORT_OFF</code> .. <code>JOY_SUPPORT_KEYBOARD</code></td><td>0x00 .. 0x0C</td><td>Modos de suporte para <code>JOY_setSupport()</code>: OFF (0x00), 3BTN (0x01), 6BTN (0x02), MOUSE (0x03), TRACKBALL (0x04), TEAMPLAYER (0x05), EA4WAYPLAY (0x06), MENACER (0x07), JUSTIFIER_BLUE (0x08), JUSTIFIER_BOTH (0x09), PHASER (0x0A), ANALOGJOY (0x0B, ainda não suportado), KEYBOARD (0x0C, ainda não suportado).</td></tr>
+</table></div>
+<div class="types"><h3>Tipos</h3>
+<article class="type" id="type-JoyEventCallback"><h4><code>JoyEventCallback</code></h4>
+<p>Tipo de função de callback para eventos de joypad. É chamada quando o estado de um controle muda (botão pressionado ou solto). Exemplo: se o jogador 1 acabou de pressionar START, o callback recebe <code>joy = JOY_1</code>, <code>changed = BUTTON_START</code>, <code>state = BUTTON_START</code>; se soltou o botão A, recebe <code>changed = BUTTON_A</code> e <code>state = 0</code>.</p>
+<pre class="code">typedef void JoyEventCallback(u16 joy, u16 changed, u16 state);
+/* joy     : joypad que gerou o evento (JOY_1 .. JOY_8)
+   changed : botões cujo estado mudou (máscaras BUTTON_*)
+   state   : estado atual dos botões do joypad */</pre></article>
+</div>
+<div class="functions"><h3>Funções</h3>
+<article class="fn" id="fn-JOY_init"><h4><code>void JOY_init(void)</code></h4>
+<p>Inicializa o subsistema de controles: faz a inicialização de software e hardware das portas (reset e detecção de dispositivos). É chamada automaticamente na inicialização do SGDK, não sendo necessário chamá-la manualmente.</p></article>
+<article class="fn" id="fn-JOY_reset"><h4><code>void JOY_reset(void)</code></h4>
+<p>Reinicializa o subsistema de controles: reseta o estado das portas e executa novamente a detecção de dispositivos. Também é chamada automaticamente na inicialização do SGDK.</p></article>
+<article class="fn" id="fn-JOY_getEventHandler"><h4><code>JoyEventCallback* JOY_getEventHandler()</code></h4>
+<p>Retorna o callback atualmente registrado para mudanças de estado dos controles. O SGDK atualiza internamente o estado dos controles a cada período de V-Blank e dispara um evento quando detecta mudança.</p>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o callback atual de mudança de estado de joypad (ou NULL se nenhum estiver definido).</p></article>
+<article class="fn" id="fn-JOY_setEventHandler"><h4><code>void JOY_setEventHandler(JoyEventCallback *CB)</code></h4>
+<p>Define a função de callback chamada quando o estado de algum controle muda. O protótipo deve seguir o tipo <code>JoyEventCallback</code>: <code>void funcao(u16 joy, u16 changed, u16 state)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>CB</code></td><td>Callback a chamar quando o estado do(s) controle(s) mudar. Ex.: se o jogador 1 pressionou START, recebe <code>joy = JOY_1</code>, <code>changed = BUTTON_START</code>, <code>state = BUTTON_START</code>.</td></tr></table></article>
+<article class="fn" id="fn-JOY_setSupport"><h4><code>void JOY_setSupport(u16 port, u16 support)</code></h4>
+<p>Define o suporte de periférico para a porta especificada. Por padrão as portas só habilitam suporte a joypads; se um pad não for detectado, um multitap ou mouse é habilitado quando presente. Ex.: <code>JOY_setSupport(PORT_2, JOY_SUPPORT_MOUSE);</code> habilita o MegaMouse na porta 2.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>port</code></td><td>Porta a configurar: <code>PORT_1</code> ou <code>PORT_2</code>.</td></tr>
+<tr><td><code>support</code></td><td>Modo de suporte desejado (uma das constantes <code>JOY_SUPPORT_*</code>).</td></tr></table></article>
+<article class="fn" id="fn-JOY_getPortType"><h4><code>u8 JOY_getPortType(u16 port)</code></h4>
+<p>Obtém o tipo de periférico conectado à porta física especificada. O tipo é detectado automaticamente durante <code>JOY_init()</code> / <code>JOY_reset()</code>; esta função ajuda a decidir como configurar o suporte da porta. Tipos maiores que 15 não são derivados do método de identificação de controle da Sega.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>port</code></td><td>Porta a consultar: <code>PORT_1</code> ou <code>PORT_2</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> tipo do periférico (<code>PORT_TYPE_MENACER</code>, <code>PORT_TYPE_JUSTIFIER</code>, <code>PORT_TYPE_MOUSE</code>, <code>PORT_TYPE_TEAMPLAYER</code>, <code>PORT_TYPE_PAD</code>, <code>PORT_TYPE_UNKNOWN</code> ou <code>PORT_TYPE_EA4WAYPLAY</code>).</p></article>
+<article class="fn" id="fn-JOY_getJoypadType"><h4><code>u8 JOY_getJoypadType(u16 joy)</code></h4>
+<p>Obtém o tipo de periférico conectado ao joypad lógico especificado. Prefira este método a <code>JOY_getPortType()</code> quando precisar de informação sobre periféricos ligados a um adaptador multi-joypad (como o Sega TeamPlayer).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>joy</code></td><td>Joypad a consultar: <code>JOY_1</code> a <code>JOY_8</code> (5 a 8 apenas com dois TeamPlayer conectados).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> tipo do periférico (<code>JOY_TYPE_PAD3</code>, <code>JOY_TYPE_PAD6</code>, <code>JOY_TYPE_MOUSE</code>, <code>JOY_TYPE_TRACKBALL</code>, <code>JOY_TYPE_MENACER</code>, <code>JOY_TYPE_JUSTIFIER</code> ou <code>JOY_TYPE_UNKNOWN</code>).</p></article>
+<article class="fn" id="fn-JOY_readJoypad"><h4><code>u16 JOY_readJoypad(u16 joy)</code></h4>
+<p>Lê o estado atual dos botões do joypad. Ex.: <code>if (JOY_readJoypad(JOY_1) &amp; (BUTTON_START | BUTTON_A))</code> testa se START ou A está pressionado no joypad 1.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>joy</code></td><td>Joypad a consultar: <code>JOY_1</code> a <code>JOY_8</code>, ou <code>JOY_ALL</code> para o estado combinado de todos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> estado do joypad como combinação das máscaras <code>BUTTON_*</code> (incluindo os aliases de mouse <code>BUTTON_LMB</code>/<code>BUTTON_MMB</code>/<code>BUTTON_RMB</code>).</p></article>
+<article class="fn" id="fn-JOY_readJoypadX"><h4><code>s16 JOY_readJoypadX(u16 joy)</code></h4>
+<p>Lê o eixo X do joypad. Para mouse, retorna dado de eixo com sinal: variações positivas indicam movimento para a direita, negativas para a esquerda. Para lightgun, retorna a coordenada X de tela sem sinal (não calibrada — a calibração fica a cargo do jogo); o valor é -1 se a arma não está apontada para a tela ou se a tela está escura demais para detecção.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>joy</code></td><td>Joypad a consultar (<code>JOY_1</code> a <code>JOY_8</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor do eixo X (com sinal para mouse; coordenada de tela para lightgun, ou -1 se fora da tela).</p></article>
+<article class="fn" id="fn-JOY_writeJoypadX"><h4><code>s16 JOY_writeJoypadX(u16 joy, u16 pos)</code></h4>
+<p>Escreve (define) o valor do eixo X do joypad. Útil, por exemplo, para reposicionar o contador de um mouse ou a posição de referência de uma lightgun.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>joy</code></td><td>Joypad alvo (<code>JOY_1</code> a <code>JOY_8</code>).</td></tr>
+<tr><td><code>pos</code></td><td>Posição X desejada para o joypad.</td></tr></table></article>
+<article class="fn" id="fn-JOY_readJoypadY"><h4><code>s16 JOY_readJoypadY(u16 joy)</code></h4>
+<p>Lê o eixo Y do joypad. Para mouse, retorna dado de eixo com sinal: variações positivas indicam movimento para cima, negativas para baixo. Para lightgun, retorna a coordenada Y de tela sem sinal (não calibrada); o valor é -1 se a arma não está apontada para a tela ou se a tela está escura demais para detecção.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>joy</code></td><td>Joypad a consultar (<code>JOY_1</code> a <code>JOY_8</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor do eixo Y (com sinal para mouse; coordenada de tela para lightgun, ou -1 se fora da tela).</p></article>
+<article class="fn" id="fn-JOY_writeJoypadY"><h4><code>s16 JOY_writeJoypadY(u16 joy, u16 pos)</code></h4>
+<p>Escreve (define) o valor do eixo Y do joypad.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>joy</code></td><td>Joypad alvo (<code>JOY_1</code> a <code>JOY_8</code>).</td></tr>
+<tr><td><code>pos</code></td><td>Posição Y desejada para o joypad.</td></tr></table></article>
+<article class="fn" id="fn-JOY_waitPressBtn"><h4><code>void JOY_waitPressBtn(void)</code></h4>
+<p>Bloqueia a execução até que algum botão seja pressionado em qualquer controle conectado.</p></article>
+<article class="fn" id="fn-JOY_waitPressBtnTime"><h4><code>u16 JOY_waitPressBtnTime(u16 ms)</code></h4>
+<p>Aguarda o tempo especificado ou até que um botão seja pressionado em qualquer controle conectado — o que ocorrer primeiro.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ms</code></td><td>Tempo máximo de espera em milissegundos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o botão efetivamente pressionado, ou FALSE se nenhum botão foi pressionado dentro do tempo dado.</p></article>
+<article class="fn" id="fn-JOY_waitPress"><h4><code>u16 JOY_waitPress(u16 joy, u16 btn)</code></h4>
+<p>Aguarda até que o(s) botão(ões) especificado(s) seja(m) pressionado(s) no joypad indicado. Ex.: <code>pressed = JOY_waitPress(JOY_1, BUTTON_DIR | BUTTON_A);</code> espera qualquer direcional ou o botão A no joypad 1.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>joy</code></td><td>Joypad a monitorar (ver <code>JOY_readJoypad()</code>); use <code>JOY_ALL</code> para qualquer controle conectado.</td></tr>
+<tr><td><code>btn</code></td><td>Botão(ões) a aguardar: máscaras <code>BUTTON_*</code>, incluindo os grupos <code>BUTTON_DIR</code>, <code>BUTTON_BTN</code> e <code>BUTTON_ALL</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o botão efetivamente pressionado.</p></article>
+<article class="fn" id="fn-JOY_waitPressTime"><h4><code>u16 JOY_waitPressTime(u16 joy, u16 btn, u16 ms)</code></h4>
+<p>Aguarda que o(s) botão(ões) especificado(s) seja(m) pressionado(s) no joypad indicado, com tempo limite. Ex.: <code>pressed = JOY_waitPressTime(JOY_1, BUTTON_DIR | BUTTON_A, 5000);</code> espera no máximo 5 segundos.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>joy</code></td><td>Joypad a monitorar; use <code>JOY_ALL</code> para qualquer controle conectado.</td></tr>
+<tr><td><code>btn</code></td><td>Botão(ões) a aguardar (máscaras <code>BUTTON_*</code>).</td></tr>
+<tr><td><code>ms</code></td><td>Tempo máximo de espera em ms (0 = espera infinita).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o botão efetivamente pressionado, ou FALSE se nenhum dos botões especificados foi pressionado no tempo dado.</p></article>
+<article class="fn" id="fn-JOY_update"><h4><code>void JOY_update(void)</code></h4>
+<p>Atualiza manualmente o estado dos joypads. Por padrão a biblioteca atualiza o estado no processamento da interrupção vertical (V-Int); chamar este método força a atualização imediata.</p></article>
+</div>
+</section>
+<section class="module" id="mod-sram">
+<h2>sram.h <span class="subtitle">Memória SRAM para salvamento de jogo</span></h2>
+<p class="mod-desc">Este módulo fornece métodos para ler e escrever na SRAM (Static RAM), a memória de backup usada em cartuchos para salvar o progresso do jogo. Por padrão assume-se que a SRAM é de 8 bits e conectada aos endereços ímpares; é possível mudar para endereços pares alterando <code>SRAM_BASE</code> de <code>0x200001</code> para <code>0x200000</code> e recompilando a biblioteca. A região <code>0x200000-0x3FFFFF</code>, controlada pelos registradores <code>0xA130F9-0xA130FF</code>, pode ser ROM ou RAM e pode ser protegida contra escrita: o bit MD do registrador de controle define o modo (0 = ROM, 1 = RAM) e o bit WP a proteção de escrita (0 = gravável, 1 = não gravável). Use <code>SRAM_enable()</code> antes de acessar a SRAM e <code>SRAM_disable()</code> ao terminar.</p>
+<div class="defines"><h3>Constantes e macros</h3>
+<table class="def-table"><tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>SRAM_CONTROL</code></td><td>MAPPER_BASE (0xA130F1)</td><td>Endereço do registrador de controle da SRAM (modo ROM/RAM e proteção de escrita).</td></tr>
+<tr><td><code>SRAM_BASE</code></td><td>0x200001</td><td>Endereço base da SRAM (endereços ímpares por padrão; use 0x200000 para endereços pares, recompilando a biblioteca).</td></tr>
+</table></div>
+<div class="functions"><h3>Funções</h3>
+<article class="fn" id="fn-SRAM_enable"><h4><code>void SRAM_enable(void)</code></h4>
+<p>Habilita a SRAM em modo leitura e escrita (Read Write).</p></article>
+<article class="fn" id="fn-SRAM_enableRO"><h4><code>void SRAM_enableRO(void)</code></h4>
+<p>Habilita a SRAM em modo somente leitura (Read Only).</p></article>
+<article class="fn" id="fn-SRAM_disable"><h4><code>void SRAM_disable(void)</code></h4>
+<p>Desabilita a SRAM (a região volta a mapear a ROM).</p></article>
+<article class="fn" id="fn-SRAM_readByte"><h4><code>u8 SRAM_readByte(u32 offset)</code></h4>
+<p>Lê um byte (8 bits) da SRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>offset</code></td><td>Deslocamento (offset) de onde queremos ler.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor lido.</p></article>
+<article class="fn" id="fn-SRAM_readWord"><h4><code>u16 SRAM_readWord(u32 offset)</code></h4>
+<p>Lê uma word (16 bits) da SRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>offset</code></td><td>Deslocamento de onde queremos ler.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor lido.</p></article>
+<article class="fn" id="fn-SRAM_readLong"><h4><code>u32 SRAM_readLong(u32 offset)</code></h4>
+<p>Lê um long (32 bits) da SRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>offset</code></td><td>Deslocamento de onde queremos ler.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor lido.</p></article>
+<article class="fn" id="fn-SRAM_writeByte"><h4><code>void SRAM_writeByte(u32 offset, u8 val)</code></h4>
+<p>Escreve um byte (8 bits) na SRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>offset</code></td><td>Deslocamento onde queremos escrever.</td></tr>
+<tr><td><code>val</code></td><td>Valor a escrever.</td></tr></table></article>
+<article class="fn" id="fn-SRAM_writeWord"><h4><code>void SRAM_writeWord(u32 offset, u16 val)</code></h4>
+<p>Escreve uma word (16 bits) na SRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>offset</code></td><td>Deslocamento onde queremos escrever.</td></tr>
+<tr><td><code>val</code></td><td>Valor a escrever.</td></tr></table></article>
+<article class="fn" id="fn-SRAM_writeLong"><h4><code>void SRAM_writeLong(u32 offset, u32 val)</code></h4>
+<p>Escreve um long (32 bits) na SRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>offset</code></td><td>Deslocamento onde queremos escrever.</td></tr>
+<tr><td><code>val</code></td><td>Valor a escrever.</td></tr></table></article>
+</div>
+</section>
+<section class="module" id="mod-string">
+<h2>string.h <span class="subtitle">Manipulação de strings e conversões</span></h2>
+<p class="mod-desc">Este módulo fornece operações básicas sobre strings terminadas em nulo (null terminated) e conversões de tipos numéricos para texto. Quando o SGDK é compilado com <code>ENABLE_NEWLIB != 0</code>, as funções padrão (strlen, strcpy, sprintf etc.) vêm da newlib e este header apenas adiciona as funções extras do SGDK (strclr, intToStr, fix16ToStr etc.); caso contrário, o próprio SGDK fornece implementações leves e otimizadas para o Motorola 68000. Use-o para montar textos de HUD, placares, depuração e formatação de valores em ponto fixo (fix16/fix32/fastfix16/fastfix32).</p>
+<div class="defines"><h3>Constantes e macros</h3>
+<table class="def-table"><tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>_STRING_H_</code> / <code>_NEWLIB_STRING_H_</code></td><td>—</td><td>Guardas de inclusão; com <code>ENABLE_NEWLIB != 0</code> o header da newlib é incluído primeiro via <code>include_next</code>.</td></tr>
+</table></div>
+<div class="types"><h3>Tipos</h3>
+<article class="type" id="type-va_list"><h4><code>va_list</code></h4>
+<p>Tipo de lista de argumentos variádicos (disponível apenas quando <code>ENABLE_NEWLIB == 0</code>), usado com <code>va_start</code>/<code>va_arg</code>/<code>va_end</code> e por <code>vsprintf()</code>.</p>
+<pre class="code">typedef void *__gnuc_va_list;      /* ponteiro opaco para argumentos */
+typedef __gnuc_va_list va_list;    /* lista de argumentos variádicos */</pre></article>
+</div>
+<div class="functions"><h3>Funções</h3>
+<article class="fn" id="fn-isdigit"><h4><code>isdigit(c)</code></h4>
+<p>Macro funcional que testa se o caractere especificado é um dígito decimal ('0' a '9') ou não.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>c</code></td><td>Caractere a testar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor não nulo (verdadeiro) se <code>c</code> for um dígito.</p></article>
+<article class="fn" id="fn-va_start"><h4><code>va_start(v, l)</code></h4>
+<p>Macro funcional que inicializa a lista de argumentos variádicos <code>v</code> a partir do último parâmetro fixo <code>l</code> (mapeada para <code>__builtin_va_start</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>v</code></td><td>Variável <code>va_list</code> a inicializar.</td></tr>
+<tr><td><code>l</code></td><td>Último parâmetro nomeado da função variádica.</td></tr></table></article>
+<article class="fn" id="fn-va_arg"><h4><code>va_arg(v, l)</code></h4>
+<p>Macro funcional que obtém o próximo argumento da lista variádica <code>v</code> com o tipo <code>l</code> (mapeada para <code>__builtin_va_arg</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>v</code></td><td>Lista <code>va_list</code> em uso.</td></tr>
+<tr><td><code>l</code></td><td>Tipo do argumento a extrair.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o próximo argumento da lista, com o tipo indicado.</p></article>
+<article class="fn" id="fn-va_end"><h4><code>va_end(v)</code></h4>
+<p>Macro funcional que finaliza o uso da lista de argumentos variádicos <code>v</code> (mapeada para <code>__builtin_va_end</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>v</code></td><td>Lista <code>va_list</code> a finalizar.</td></tr></table></article>
+<article class="fn" id="fn-strlen"><h4><code>u16 strlen(const char *str)</code></h4>
+<p>Calcula e retorna o comprimento da string especificada (limitado a no máximo 65535 caracteres).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>str</code></td><td>String cujo comprimento queremos calcular.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o comprimento da string.</p></article>
+<article class="fn" id="fn-strnlen"><h4><code>u16 strnlen(const char *str, u16 maxlen)</code></h4>
+<p>Calcula o comprimento da string apontada por <code>str</code>, sem incluir o caractere nulo terminador, até no máximo <code>maxlen</code> bytes. A função não examina além dos primeiros <code>maxlen</code> bytes.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>str</code></td><td>String cujo comprimento queremos calcular.</td></tr>
+<tr><td><code>maxlen</code></td><td>Comprimento máximo a verificar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o mínimo entre <code>maxlen</code> e o número de caracteres antes do nulo terminador.</p></article>
+<article class="fn" id="fn-strcmp"><h4><code>s8 strcmp(const char *str1, const char *str2)</code></h4>
+<p>Compara as duas strings caractere a caractere, a partir do primeiro; continua enquanto forem iguais, até encontrar diferença ou o caractere nulo terminador.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>str1</code></td><td>Primeira string a comparar.</td></tr>
+<tr><td><code>str2</code></td><td>Segunda string a comparar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> zero se as strings são iguais; valor maior que zero se o primeiro caractere divergente tem valor maior em <code>str1</code> do que em <code>str2</code>; valor menor que zero no caso oposto.</p></article>
+<article class="fn" id="fn-strcpy"><h4><code>char* strcpy(char *dest, const char *src)</code></h4>
+<p>Copia a string de origem para a de destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>dest</code></td><td>String de destino (deve ser grande o suficiente para receber a cópia).</td></tr>
+<tr><td><code>src</code></td><td>String de origem.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a string de destino.</p></article>
+<article class="fn" id="fn-strncpy"><h4><code>char* strncpy(char *dest, const char *src, u16 len)</code></h4>
+<p>Copia os primeiros <code>len</code> caracteres da string de origem para a de destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>dest</code></td><td>String de destino (seu tamanho deve ser &gt;= (len + 1)).</td></tr>
+<tr><td><code>src</code></td><td>String de origem.</td></tr>
+<tr><td><code>len</code></td><td>Número máximo de caracteres a copiar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a string de destino.</p></article>
+<article class="fn" id="fn-strcat"><h4><code>char* strcat(char *dest, const char *src)</code></h4>
+<p>Concatena duas strings: acrescenta a string de origem ao final da string de destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>dest</code></td><td>String de destino (deve ser grande o suficiente para receber o acréscimo).</td></tr>
+<tr><td><code>src</code></td><td>String de origem.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a string de destino.</p></article>
+<article class="fn" id="fn-strchr"><h4><code>char* strchr(const char *from, char c)</code></h4>
+<p>Procura um caractere na string especificada. Retorna um ponteiro para a primeira ocorrência de <code>c</code> na string dada, ou NULL se o caractere não for encontrado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>from</code></td><td>String onde procurar.</td></tr>
+<tr><td><code>c</code></td><td>Caractere a procurar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a primeira ocorrência de <code>c</code>, ou NULL se não encontrado.</p></article>
+<article class="fn" id="fn-vsprintf"><h4><code>int vsprintf(char *buffer, const char *fmt, va_list args)</code></h4>
+<p>Compõe uma string com o mesmo texto que seria impresso se <code>fmt</code> fosse usado em printf, mas em vez de imprimir, o conteúdo é armazenado como string C no buffer indicado. Se <code>fmt</code> contém especificadores de formato (subsequências iniciadas por %), os argumentos adicionais são formatados e inseridos no lugar dos respectivos especificadores.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>buffer</code></td><td>String de destino (deve ser grande o suficiente para receber o resultado).</td></tr>
+<tr><td><code>fmt</code></td><td>String C com o texto a escrever, opcionalmente com especificadores de formato embutidos.</td></tr>
+<tr><td><code>args</code></td><td>Lista de argumentos (<code>va_list</code>); deve haver ao menos tantos argumentos quanto especificadores no formato — os excedentes são ignorados.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> em caso de sucesso, o número total de caracteres escritos.</p></article>
+<article class="fn" id="fn-sprintf"><h4><code>int sprintf(char *buffer, const char *fmt, ...)</code></h4>
+<p>Compõe uma string com o mesmo texto que seria impresso se <code>fmt</code> fosse usado em printf, armazenando o conteúdo no buffer indicado. Versão variádica de <code>vsprintf()</code>; declarada com <code>__attribute__ ((format (printf, 2, 3)))</code> para que o compilador valide o formato.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>buffer</code></td><td>String de destino (deve ser grande o suficiente para receber o resultado).</td></tr>
+<tr><td><code>fmt</code></td><td>String C com o texto a escrever, opcionalmente com especificadores de formato embutidos.</td></tr>
+<tr><td><code>...</code></td><td>Argumentos adicionais, um para cada especificador de formato; argumentos excedentes são ignorados.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> em caso de sucesso, o número total de caracteres escritos.</p></article>
+<article class="fn" id="fn-strclr"><h4><code>char* strclr(char *str)</code></h4>
+<p>Limpa (esvazia) a string especificada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>str</code></td><td>String a limpar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a string dada.</p></article>
+<article class="fn" id="fn-strreplacechar"><h4><code>char *strreplacechar(char *str, char oldc, char newc)</code></h4>
+<p>Substitui todas as ocorrências de um caractere em uma string terminada em nulo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>str</code></td><td>String sobre a qual operar.</td></tr>
+<tr><td><code>oldc</code></td><td>Caractere a ser substituído.</td></tr>
+<tr><td><code>newc</code></td><td>Caractere que substituirá <code>oldc</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o byte nulo no final de <code>str</code>.</p></article>
+<article class="fn" id="fn-intToStr"><h4><code>u16 intToStr(s32 value, char *str, u16 minsize)</code></h4>
+<p>Converte um valor s32 para string (o valor de entrada deve estar no intervalo [-500000000..500000000]). Se o resultado for mais curto que <code>minsize</code>, o método preenche o início com o caractere '0'.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor inteiro s32 a converter (intervalo [-500000000..500000000]).</td></tr>
+<tr><td><code>str</code></td><td>String de destino (deve ser grande o suficiente para o resultado).</td></tr>
+<tr><td><code>minsize</code></td><td>Tamanho mínimo da string resultante.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o comprimento da string gerada.</p></article>
+<article class="fn" id="fn-uintToStr"><h4><code>u16 uintToStr(u32 value, char *str, u16 minsize)</code></h4>
+<p>Converte um valor u32 para string (o valor de entrada deve estar no intervalo [0..500000000]). Se o resultado for mais curto que <code>minsize</code>, o início é preenchido com '0'.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor inteiro u32 a converter (intervalo [0..500000000]).</td></tr>
+<tr><td><code>str</code></td><td>String de destino (deve ser grande o suficiente para o resultado).</td></tr>
+<tr><td><code>minsize</code></td><td>Tamanho mínimo da string resultante.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o comprimento da string gerada.</p></article>
+<article class="fn" id="fn-intToHex"><h4><code>u16 intToHex(u32 value, char *str, u16 minsize)</code></h4>
+<p>Converte um valor u32 para string hexadecimal. Se o resultado for mais curto que <code>minsize</code>, o início é preenchido com '0'.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor inteiro u32 a converter para hexadecimal.</td></tr>
+<tr><td><code>str</code></td><td>String de destino (deve ser grande o suficiente para o resultado).</td></tr>
+<tr><td><code>minsize</code></td><td>Tamanho mínimo da string resultante.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o comprimento da string gerada.</p></article>
+<article class="fn" id="fn-fix16ToStr"><h4><code>void fix16ToStr(fix16 value, char *str, u16 numdec)</code></h4>
+<p>Converte um valor em ponto fixo fix16 (formato 10.6) para string.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor fix16 a converter para string.</td></tr>
+<tr><td><code>str</code></td><td>String de destino (deve ser grande o suficiente para o resultado).</td></tr>
+<tr><td><code>numdec</code></td><td>Número de casas decimais desejadas.</td></tr></table></article>
+<article class="fn" id="fn-fix32ToStr"><h4><code>void fix32ToStr(fix32 value, char *str, u16 numdec)</code></h4>
+<p>Converte um valor em ponto fixo fix32 (formato 22.10) para string.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor fix32 a converter para string.</td></tr>
+<tr><td><code>str</code></td><td>String de destino (deve ser grande o suficiente para o resultado).</td></tr>
+<tr><td><code>numdec</code></td><td>Número de casas decimais desejadas.</td></tr></table></article>
+<article class="fn" id="fn-fastFix16ToStr"><h4><code>void fastFix16ToStr(fastfix16 value, char *str, u16 numdec)</code></h4>
+<p>Converte um valor em ponto fixo fastfix16 (formato 8.8) para string.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor fastfix16 a converter para string.</td></tr>
+<tr><td><code>str</code></td><td>String de destino (deve ser grande o suficiente para o resultado).</td></tr>
+<tr><td><code>numdec</code></td><td>Número de casas decimais desejadas.</td></tr></table></article>
+<article class="fn" id="fn-fastFix32ToStr"><h4><code>void fastFix32ToStr(fastfix32 value, char *str, u16 numdec)</code></h4>
+<p>Converte um valor em ponto fixo fastfix32 (formato 16.16) para string.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor fastfix32 a converter para string.</td></tr>
+<tr><td><code>str</code></td><td>String de destino (deve ser grande o suficiente para o resultado).</td></tr>
+<tr><td><code>numdec</code></td><td>Número de casas decimais desejadas.</td></tr></table></article>
+<article class="fn" id="fn-F16_toStr"><h4><code>void F16_toStr(fix16 value, char *str, u16 numdec)</code></h4>
+<p>Idêntica a <code>fix16ToStr(..)</code> (nome curto alternativo).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code>, <code>str</code>, <code>numdec</code></td><td>Mesmos parâmetros de <code>fix16ToStr()</code>.</td></tr></table></article>
+<article class="fn" id="fn-F32_toStr"><h4><code>void F32_toStr(fix32 value, char *str, u16 numdec)</code></h4>
+<p>Idêntica a <code>fix32ToStr(..)</code> (nome curto alternativo).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code>, <code>str</code>, <code>numdec</code></td><td>Mesmos parâmetros de <code>fix32ToStr()</code>.</td></tr></table></article>
+<article class="fn" id="fn-FF16_toStr"><h4><code>void FF16_toStr(fastfix16 value, char *str, u16 numdec)</code></h4>
+<p>Idêntica a <code>fastFix16ToStr(..)</code> (nome curto alternativo).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code>, <code>str</code>, <code>numdec</code></td><td>Mesmos parâmetros de <code>fastFix16ToStr()</code>.</td></tr></table></article>
+<article class="fn" id="fn-FF32_toStr"><h4><code>void FF32_toStr(fastfix32 value, char *str, u16 numdec)</code></h4>
+<p>Idêntica a <code>fastFix32ToStr(..)</code> (nome curto alternativo).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code>, <code>str</code>, <code>numdec</code></td><td>Mesmos parâmetros de <code>fastFix32ToStr()</code>.</td></tr></table></article>
+</div>
+</section>
+<section class="module" id="mod-tools">
+<h2>tools.h <span class="subtitle">Ferramentas diversas (log, descompactação, ordenação)</span></h2>
+<p class="mod-desc">Este módulo reúne utilitários diversos do SGDK: gerador de números pseudo-aleatórios, impressão formatada no console de depuração do emulador (KMod) via <code>kprintf()</code> e a família <code>KLog_*</code> (obsoleta), alocação e descompactação de recursos gráficos (Bitmap, TileSet, TileMap, Image, Map) compactados com aplib ou LZ4W, e algoritmos de ordenação quicksort para arrays de tipos primitivos e de ponteiros para objetos. Inclui também macros de profiling de ciclos para o emulador BlastEm.</p>
+<div class="defines"><h3>Constantes e macros</h3>
+<table class="def-table"><tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>COMPRESSION_NONE</code></td><td>0</td><td>Sem compressão.</td></tr>
+<tr><td><code>COMPRESSION_APLIB</code></td><td>1</td><td>Esquema de compressão aplib (appack ou sixpack).</td></tr>
+<tr><td><code>COMPRESSION_LZ4W</code></td><td>2</td><td>Esquema de compressão LZ4W.</td></tr>
+<tr><td><code>BLASTEM_PROFIL_START</code></td><td>VDP_setReg(0x9F, 0xC0)</td><td>Contador de ciclos simples do emulador BlastEm — inicia a contagem de ciclos.</td></tr>
+<tr><td><code>BLASTEM_PROFIL_END</code></td><td>VDP_setReg(0x9F, 0x00)</td><td>Contador de ciclos do BlastEm — encerra a contagem e exibe o resultado no console.</td></tr>
+</table></div>
+<div class="types"><h3>Tipos</h3>
+<article class="type" id="type-_comparatorCallback"><h4><code>_comparatorCallback</code></h4>
+<p>Callback de comparação para <code>qsort()</code>. É usado para comparar dois objetos e deve retornar: valor &lt; 0 se <code>o1</code> vem antes de <code>o2</code>; 0 se são iguais; valor &gt; 0 se <code>o1</code> vem depois de <code>o2</code>.</p>
+<pre class="code">typedef s16 _comparatorCallback(void* o1, void* o2);
+/* o1, o2 : ponteiros para os dois objetos a comparar
+   retorno: &lt;0, 0 ou &gt;0 conforme a ordem relativa   */</pre></article>
+</div>
+<div class="functions"><h3>Funções</h3>
+<article class="fn" id="fn-setRandomSeed"><h4><code>void setRandomSeed(u16 seed)</code></h4>
+<p>Define a semente do gerador de números aleatórios (permitindo reproduzir séries distintas de valores).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>seed</code></td><td>Semente do gerador pseudo-aleatório.</td></tr></table></article>
+<article class="fn" id="fn-random"><h4><code>u16 random(void)</code></h4>
+<p>Gera um número pseudo-aleatório.</p>
+<p class="returns"><strong>Retorna:</strong> um valor inteiro u16 aleatório.</p></article>
+<article class="fn" id="fn-kprintf"><h4><code>int kprintf(const char *fmt, ...)</code></h4>
+<p>Compõe uma string com o mesmo texto que seria produzido por printf, mas em vez de imprimir na tela, o conteúdo é impresso no console KMod do emulador. Se <code>fmt</code> contém especificadores de formato (subsequências iniciadas por %), os argumentos adicionais são formatados e inseridos no resultado. Internamente é alocado um buffer de 255 caracteres — considere essa limitação.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fmt</code></td><td>String C com o texto a escrever, opcionalmente com especificadores de formato embutidos.</td></tr>
+<tr><td><code>...</code></td><td>Argumentos adicionais, um por especificador de formato; argumentos excedentes são ignorados.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> em caso de sucesso, o número total de caracteres escritos (limitado a 255).</p></article>
+<article class="fn" id="fn-KLog"><h4><code>void KLog(char* text)</code></h4>
+<p>Escreve o texto dado no console de log KDebug do emulador. <em>Obsoleta (deprecated): prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>text</code></td><td>Texto a exibir no console.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U1"><h4><code>void KLog_U1(char* t1, u32 v1)</code></h4>
+<p>Escreve no console KDebug um texto seguido de um valor sem sinal (u32). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code></td><td>Texto exibido antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor u32 exibido.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U2"><h4><code>void KLog_U2(char* t1, u32 v1, char* t2, u32 v2)</code></h4>
+<p>Escreve no console KDebug dois pares texto + valor sem sinal (u32). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>, <code>t2</code></td><td>Textos exibidos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores u32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U3"><h4><code>void KLog_U3(char* t1, u32 v1, char* t2, u32 v2, char* t3, u32 v3)</code></h4>
+<p>Escreve no console KDebug três pares texto + valor sem sinal (u32). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t3</code></td><td>Textos exibidos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores u32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U4"><h4><code>void KLog_U4(char* t1, u32 v1, char* t2, u32 v2, char* t3, u32 v3, char* t4, u32 v4)</code></h4>
+<p>Escreve no console KDebug quatro pares texto + valor sem sinal (u32). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t4</code></td><td>Textos exibidos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores u32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U1_"><h4><code>void KLog_U1_(char* t1, u32 v1, char* t2)</code></h4>
+<p>Como <code>KLog_U1</code>, com um texto final após o valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor u32 exibido.</td></tr><tr><td><code>t2</code></td><td>Texto final, exibido após o valor.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U2_"><h4><code>void KLog_U2_(char* t1, u32 v1, char* t2, u32 v2, char* t3)</code></h4>
+<p>Como <code>KLog_U2</code>, com um texto final após o último valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores u32 exibidos.</td></tr><tr><td><code>t3</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U3_"><h4><code>void KLog_U3_(char* t1, u32 v1, char* t2, u32 v2, char* t3, u32 v3, char* t4)</code></h4>
+<p>Como <code>KLog_U3</code>, com um texto final após o último valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores u32 exibidos.</td></tr><tr><td><code>t4</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U4_"><h4><code>void KLog_U4_(char* t1, u32 v1, char* t2, u32 v2, char* t3, u32 v3, char* t4, u32 v4, char* t5)</code></h4>
+<p>Como <code>KLog_U4</code>, com um texto final após o último valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores u32 exibidos.</td></tr><tr><td><code>t5</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U1x"><h4><code>void KLog_U1x(u16 minSize, char* t1, u32 v1)</code></h4>
+<p>Como <code>KLog_U1</code>, exibindo o valor com tamanho mínimo (preenchido com zeros). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição do(s) valor(es).</td></tr><tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor u32 exibido.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U2x"><h4><code>void KLog_U2x(u16 minSize, char* t1, u32 v1, char* t2, u32 v2)</code></h4>
+<p>Como <code>KLog_U2</code>, exibindo os valores com tamanho mínimo. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição dos valores.</td></tr><tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores u32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U3x"><h4><code>void KLog_U3x(u16 minSize, char* t1, u32 v1, char* t2, u32 v2, char* t3, u32 v3)</code></h4>
+<p>Como <code>KLog_U3</code>, exibindo os valores com tamanho mínimo. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição dos valores.</td></tr><tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores u32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U4x"><h4><code>void KLog_U4x(u16 minSize, char* t1, u32 v1, char* t2, u32 v2, char* t3, u32 v3, char* t4, u32 v4)</code></h4>
+<p>Como <code>KLog_U4</code>, exibindo os valores com tamanho mínimo. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição dos valores.</td></tr><tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores u32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U1x_"><h4><code>void KLog_U1x_(u16 minSize, char* t1, u32 v1, char* t2)</code></h4>
+<p>Como <code>KLog_U1x</code>, com um texto final após o valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição do valor.</td></tr><tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor u32 exibido.</td></tr><tr><td><code>t2</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U2x_"><h4><code>void KLog_U2x_(u16 minSize, char* t1, u32 v1, char* t2, u32 v2, char* t3)</code></h4>
+<p>Como <code>KLog_U2x</code>, com um texto final após o último valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição dos valores.</td></tr><tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores u32 exibidos.</td></tr><tr><td><code>t3</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U3x_"><h4><code>void KLog_U3x_(u16 minSize, char* t1, u32 v1, char* t2, u32 v2, char* t3, u32 v3, char* t4)</code></h4>
+<p>Como <code>KLog_U3x</code>, com um texto final após o último valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição dos valores.</td></tr><tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores u32 exibidos.</td></tr><tr><td><code>t4</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_U4x_"><h4><code>void KLog_U4x_(u16 minSize, char* t1, u32 v1, char* t2, u32 v2, char* t3, u32 v3, char* t4, u32 v4, char* t5)</code></h4>
+<p>Como <code>KLog_U4x</code>, com um texto final após o último valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição dos valores.</td></tr><tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores u32 exibidos.</td></tr><tr><td><code>t5</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S1"><h4><code>void KLog_S1(char* t1, s32 v1)</code></h4>
+<p>Escreve no console KDebug um texto seguido de um valor com sinal (s32). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor s32 exibido.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S2"><h4><code>void KLog_S2(char* t1, s32 v1, char* t2, s32 v2)</code></h4>
+<p>Escreve no console KDebug dois pares texto + valor com sinal (s32). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores s32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S3"><h4><code>void KLog_S3(char* t1, s32 v1, char* t2, s32 v2, char* t3, s32 v3)</code></h4>
+<p>Escreve no console KDebug três pares texto + valor com sinal (s32). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores s32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S4"><h4><code>void KLog_S4(char* t1, s32 v1, char* t2, s32 v2, char* t3, s32 v3, char* t4, s32 v4)</code></h4>
+<p>Escreve no console KDebug quatro pares texto + valor com sinal (s32). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores s32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S1_"><h4><code>void KLog_S1_(char* t1, s32 v1, char* t2)</code></h4>
+<p>Como <code>KLog_S1</code>, com um texto final após o valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor s32 exibido.</td></tr><tr><td><code>t2</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S2_"><h4><code>void KLog_S2_(char* t1, s32 v1, char* t2, s32 v2, char* t3)</code></h4>
+<p>Como <code>KLog_S2</code>, com um texto final após o último valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores s32 exibidos.</td></tr><tr><td><code>t3</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S3_"><h4><code>void KLog_S3_(char* t1, s32 v1, char* t2, s32 v2, char* t3, s32 v3, char* t4)</code></h4>
+<p>Como <code>KLog_S3</code>, com um texto final após o último valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores s32 exibidos.</td></tr><tr><td><code>t4</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S4_"><h4><code>void KLog_S4_(char* t1, s32 v1, char* t2, s32 v2, char* t3, s32 v3, char* t4, s32 v4, char* t5)</code></h4>
+<p>Como <code>KLog_S4</code>, com um texto final após o último valor. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores s32 exibidos.</td></tr><tr><td><code>t5</code></td><td>Texto final.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S1x"><h4><code>void KLog_S1x(u16 minSize, char* t1, s32 v1)</code></h4>
+<p>Como <code>KLog_S1</code>, exibindo o valor com tamanho mínimo (preenchido com zeros). <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição do valor.</td></tr><tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor s32 exibido.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S2x"><h4><code>void KLog_S2x(u16 minSize, char* t1, s32 v1, char* t2, s32 v2)</code></h4>
+<p>Como <code>KLog_S2</code>, exibindo os valores com tamanho mínimo. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição dos valores.</td></tr><tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores s32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S3x"><h4><code>void KLog_S3x(u16 minSize, char* t1, s32 v1, char* t2, s32 v2, char* t3, s32 v3)</code></h4>
+<p>Como <code>KLog_S3</code>, exibindo os valores com tamanho mínimo. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição dos valores.</td></tr><tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores s32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_S4x"><h4><code>void KLog_S4x(u16 minSize, char* t1, s32 v1, char* t2, s32 v2, char* t3, s32 v3, char* t4, s32 v4)</code></h4>
+<p>Como <code>KLog_S4</code>, exibindo os valores com tamanho mínimo. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>minSize</code></td><td>Tamanho mínimo de exibição dos valores.</td></tr><tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores s32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_f1"><h4><code>void KLog_f1(char* t1, fix16 v1)</code></h4>
+<p>Escreve no console KDebug um texto seguido de um valor em ponto fixo fix16. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor fix16 exibido.</td></tr></table></article>
+<article class="fn" id="fn-KLog_f2"><h4><code>void KLog_f2(char* t1, fix16 v1, char* t2, fix16 v2)</code></h4>
+<p>Escreve no console KDebug dois pares texto + valor fix16. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores fix16 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_f3"><h4><code>void KLog_f3(char* t1, fix16 v1, char* t2, fix16 v2, char* t3, fix16 v3)</code></h4>
+<p>Escreve no console KDebug três pares texto + valor fix16. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores fix16 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_f4"><h4><code>void KLog_f4(char* t1, fix16 v1, char* t2, fix16 v2, char* t3, fix16 v3, char* t4, fix16 v4)</code></h4>
+<p>Escreve no console KDebug quatro pares texto + valor fix16. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores fix16 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_f1x"><h4><code>void KLog_f1x(s16 numDec, char* t1, fix16 v1)</code></h4>
+<p>Como <code>KLog_f1</code>, controlando o número de casas decimais exibidas. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numDec</code></td><td>Número de casas decimais exibidas.</td></tr><tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor fix16 exibido.</td></tr></table></article>
+<article class="fn" id="fn-KLog_f2x"><h4><code>void KLog_f2x(s16 numDec, char* t1, fix16 v1, char* t2, fix16 v2)</code></h4>
+<p>Como <code>KLog_f2</code>, controlando o número de casas decimais exibidas. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numDec</code></td><td>Número de casas decimais exibidas.</td></tr><tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores fix16 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_f3x"><h4><code>void KLog_f3x(s16 numDec, char* t1, fix16 v1, char* t2, fix16 v2, char* t3, fix16 v3)</code></h4>
+<p>Como <code>KLog_f3</code>, controlando o número de casas decimais exibidas. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numDec</code></td><td>Número de casas decimais exibidas.</td></tr><tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores fix16 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_f4x"><h4><code>void KLog_f4x(s16 numDec, char* t1, fix16 v1, char* t2, fix16 v2, char* t3, fix16 v3, char* t4, fix16 v4)</code></h4>
+<p>Como <code>KLog_f4</code>, controlando o número de casas decimais exibidas. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numDec</code></td><td>Número de casas decimais exibidas.</td></tr><tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores fix16 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_F1"><h4><code>void KLog_F1(char* t1, fix32 v1)</code></h4>
+<p>Escreve no console KDebug um texto seguido de um valor em ponto fixo fix32. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor fix32 exibido.</td></tr></table></article>
+<article class="fn" id="fn-KLog_F2"><h4><code>void KLog_F2(char* t1, fix32 v1, char* t2, fix32 v2)</code></h4>
+<p>Escreve no console KDebug dois pares texto + valor fix32. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores fix32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_F3"><h4><code>void KLog_F3(char* t1, fix32 v1, char* t2, fix32 v2, char* t3, fix32 v3)</code></h4>
+<p>Escreve no console KDebug três pares texto + valor fix32. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores fix32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_F4"><h4><code>void KLog_F4(char* t1, fix32 v1, char* t2, fix32 v2, char* t3, fix32 v3, char* t4, fix32 v4)</code></h4>
+<p>Escreve no console KDebug quatro pares texto + valor fix32. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores fix32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_F1x"><h4><code>void KLog_F1x(s16 numDec, char* t1, fix32 v1)</code></h4>
+<p>Como <code>KLog_F1</code>, controlando o número de casas decimais exibidas. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numDec</code></td><td>Número de casas decimais exibidas.</td></tr><tr><td><code>t1</code></td><td>Texto antes do valor.</td></tr><tr><td><code>v1</code></td><td>Valor fix32 exibido.</td></tr></table></article>
+<article class="fn" id="fn-KLog_F2x"><h4><code>void KLog_F2x(s16 numDec, char* t1, fix32 v1, char* t2, fix32 v2)</code></h4>
+<p>Como <code>KLog_F2</code>, controlando o número de casas decimais exibidas. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numDec</code></td><td>Número de casas decimais exibidas.</td></tr><tr><td><code>t1</code>, <code>t2</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>, <code>v2</code></td><td>Valores fix32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_F3x"><h4><code>void KLog_F3x(s16 numDec, char* t1, fix32 v1, char* t2, fix32 v2, char* t3, fix32 v3)</code></h4>
+<p>Como <code>KLog_F3</code>, controlando o número de casas decimais exibidas. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numDec</code></td><td>Número de casas decimais exibidas.</td></tr><tr><td><code>t1</code>..<code>t3</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v3</code></td><td>Valores fix32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-KLog_F4x"><h4><code>void KLog_F4x(s16 numDec, char* t1, fix32 v1, char* t2, fix32 v2, char* t3, fix32 v3, char* t4, fix32 v4)</code></h4>
+<p>Como <code>KLog_F4</code>, controlando o número de casas decimais exibidas. <em>Obsoleta: prefira <code>kprintf(..)</code>.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numDec</code></td><td>Número de casas decimais exibidas.</td></tr><tr><td><code>t1</code>..<code>t4</code></td><td>Textos antes de cada valor.</td></tr><tr><td><code>v1</code>..<code>v4</code></td><td>Valores fix32 exibidos.</td></tr></table></article>
+<article class="fn" id="fn-allocateBitmap"><h4><code>Bitmap *allocateBitmap(const Bitmap *bitmap)</code></h4>
+<p>Aloca uma nova estrutura Bitmap capaz de receber os dados descompactados do Bitmap especificado. Nenhuma memória é alocada para a paleta, pois assume-se sempre o uso de uma referência no campo Palette.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>bitmap</code></td><td>Bitmap de origem para o qual queremos alocar o objeto Bitmap descompactado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo objeto Bitmap alocado (em um único bloco, liberável com <code>MEM_free(bitmap)</code>), ou NULL se não houver memória suficiente.</p></article>
+<article class="fn" id="fn-allocateBitmapEx"><h4><code>Bitmap *allocateBitmapEx(u16 width, u16 heigth)</code></h4>
+<p>Aloca uma nova estrutura Bitmap capaz de receber dados de bitmap com as dimensões especificadas. Nenhuma memória é alocada para a paleta (usa-se referência no campo Palette).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>width</code></td><td>Largura em pixels do bitmap a alocar.</td></tr>
+<tr><td><code>heigth</code></td><td>Altura em pixels do bitmap a alocar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo objeto Bitmap alocado (bloco único, liberável com <code>MEM_free(bitmap)</code>), ou NULL se não houver memória suficiente.</p></article>
+<article class="fn" id="fn-allocateTileSet"><h4><code>TileSet *allocateTileSet(const TileSet *tileset)</code></h4>
+<p>Aloca uma estrutura TileSet capaz de receber os dados de tiles descompactados do TileSet especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tileset</code></td><td>TileSet de origem para o qual queremos alocar o objeto TileSet descompactado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo objeto TileSet alocado (bloco único, liberável com <code>MEM_free(..)</code>), ou NULL se não houver memória suficiente.</p></article>
+<article class="fn" id="fn-allocateTileSetEx"><h4><code>TileSet *allocateTileSetEx(u16 numTile)</code></h4>
+<p>Aloca uma nova estrutura TileSet capaz de receber os dados para o número de tiles especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numTile</code></td><td>Número de tiles que este tileset pode conter.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo objeto TileSet alocado (bloco único, liberável com <code>MEM_free(tileset)</code>), ou NULL se não houver memória suficiente.</p></article>
+<article class="fn" id="fn-allocateTileMap"><h4><code>TileMap *allocateTileMap(const TileMap *tilemap)</code></h4>
+<p>Aloca uma estrutura TileMap capaz de receber os dados de tilemap descompactados do TileMap especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tilemap</code></td><td>TileMap de origem para o qual queremos alocar o objeto TileMap descompactado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo objeto TileMap alocado (bloco único, liberável com <code>MEM_free(tilemap)</code>), ou NULL se não houver memória suficiente.</p></article>
+<article class="fn" id="fn-allocateTileMapEx"><h4><code>TileMap *allocateTileMapEx(u16 width, u16 heigth)</code></h4>
+<p>Aloca uma nova estrutura TileMap capaz de receber dados de tilemap com as dimensões especificadas.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>width</code></td><td>Largura em tiles do TileMap a alocar.</td></tr>
+<tr><td><code>heigth</code></td><td>Altura em tiles do TileMap a alocar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo objeto TileMap alocado (bloco único, liberável com <code>MEM_free(tilemap)</code>), ou NULL se não houver memória suficiente.</p></article>
+<article class="fn" id="fn-allocateImage"><h4><code>Image *allocateImage(const Image *image)</code></h4>
+<p>Aloca uma estrutura Image capaz de receber os dados de imagem descompactados da Image especificada. Nenhuma memória é alocada para a paleta (usa-se referência no campo Palette).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>image</code></td><td>Image de origem para a qual queremos alocar o objeto Image descompactado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo objeto Image alocado (bloco único, liberável com <code>MEM_free(image)</code>), ou NULL se não houver memória suficiente.</p></article>
+<article class="fn" id="fn-allocateMap"><h4><code>Map *allocateMap(const MapDefinition *mapDef)</code></h4>
+<p>Aloca uma estrutura Map capaz de receber os dados (descompactados) da MapDefinition especificada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>mapDef</code></td><td>MapDefinition de origem para a qual queremos alocar o objeto Map.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo objeto Map alocado (bloco único, liberável com <code>MEM_free(..)</code>), ou NULL se não houver memória suficiente.</p></article>
+<article class="fn" id="fn-unpackBitmap"><h4><code>Bitmap *unpackBitmap(const Bitmap *src, Bitmap *dest)</code></h4>
+<p>Descompacta o Bitmap de origem e retorna o resultado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Bitmap a descompactar.</td></tr>
+<tr><td><code>dest</code></td><td>Bitmap de destino para os dados descompactados (garanta espaço suficiente no buffer de imagem); se NULL, um Bitmap alocado dinamicamente é retornado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o Bitmap descompactado. Se <code>dest</code> era NULL, o bitmap retornado é alocado em bloco único (liberável com <code>MEM_free(bitmap)</code>); NULL é retornado se faltar memória.</p></article>
+<article class="fn" id="fn-unpackTileSet"><h4><code>TileSet *unpackTileSet(const TileSet *src, TileSet *dest)</code></h4>
+<p>Descompacta a estrutura TileSet de origem e retorna o resultado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Tiles a descompactar.</td></tr>
+<tr><td><code>dest</code></td><td>TileSet de destino para os dados descompactados (garanta espaço suficiente); se NULL, um TileSet alocado dinamicamente é retornado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o TileSet descompactado. Se <code>dest</code> era NULL, o resultado é alocado em bloco único (liberável com <code>MEM_free(..)</code>); NULL é retornado se faltar memória.</p></article>
+<article class="fn" id="fn-unpackTileMap"><h4><code>TileMap *unpackTileMap(const TileMap *src, TileMap *dest)</code></h4>
+<p>Descompacta a estrutura TileMap de origem e retorna o resultado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Tilemap a descompactar.</td></tr>
+<tr><td><code>dest</code></td><td>TileMap de destino para os dados descompactados (garanta espaço suficiente); se NULL, um TileMap alocado dinamicamente é retornado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o TileMap descompactado. Se <code>dest</code> era NULL, o resultado é alocado em bloco único (liberável com <code>MEM_free(tilemap)</code>); NULL é retornado se faltar memória.</p></article>
+<article class="fn" id="fn-unpackImage"><h4><code>Image *unpackImage(const Image *src, Image *dest)</code></h4>
+<p>Descompacta a estrutura Image de origem e retorna o resultado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Imagem a descompactar.</td></tr>
+<tr><td><code>dest</code></td><td>Image de destino para os dados descompactados; se NULL, uma Image alocada dinamicamente é retornada.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a Image descompactada. Se <code>dest</code> era NULL, o resultado é alocado em bloco único (liberável com <code>MEM_free(image)</code>); NULL é retornado se faltar memória.</p></article>
+<article class="fn" id="fn-unpack"><h4><code>u32 unpack(u16 compression, u8 *src, u8 *dest)</code></h4>
+<p>Descompacta o buffer de dados de origem no buffer de destino. Se a origem não estiver compactada, nada é feito.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>compression</code></td><td>Tipo de compressão; valores aceitos: <code>COMPRESSION_APLIB</code> ou <code>COMPRESSION_LZ4W</code>.</td></tr>
+<tr><td><code>src</code></td><td>Buffer de origem contendo os dados compactados.</td></tr>
+<tr><td><code>dest</code></td><td>Buffer de destino para os dados descompactados (garanta espaço suficiente).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o tamanho dos dados descompactados.</p></article>
+<article class="fn" id="fn-aplib_unpack"><h4><code>u32 aplib_unpack(u8 *src, u8 *dest)</code></h4>
+<p>Descompacta (compactador aplib) o buffer de dados de origem no buffer de destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Buffer de origem com os dados compactados em aplib.</td></tr>
+<tr><td><code>dest</code></td><td>Buffer de destino para os dados descompactados (garanta espaço suficiente).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o tamanho dos dados descompactados.</p></article>
+<article class="fn" id="fn-lz4w_unpack"><h4><code>u32 lz4w_unpack(const u8 *src, u8 *dest)</code></h4>
+<p>Descompacta (LZ4W) o buffer de dados de origem no buffer de destino. O tamanho dos dados descompactados está contido nos primeiros 4 bytes de <code>src</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>src</code></td><td>Buffer de origem com os dados compactados em LZ4W.</td></tr>
+<tr><td><code>dest</code></td><td>Buffer de destino para os dados descompactados (garanta espaço suficiente).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o tamanho dos dados descompactados.</p></article>
+<article class="fn" id="fn-qsort_u8"><h4><code>void qsort_u8(u8 *data, u16 left, u16 right)</code></h4>
+<p>Algoritmo quicksort sobre um array de dados u8.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados u8.</td></tr>
+<tr><td><code>left</code></td><td>Índice esquerdo (deve ser 0).</td></tr>
+<tr><td><code>right</code></td><td>Índice direito (deve ser tamanho do array - 1).</td></tr></table></article>
+<article class="fn" id="fn-qsort_s8"><h4><code>void qsort_s8(s8 *data, u16 left, u16 right)</code></h4>
+<p>Algoritmo quicksort sobre um array de dados s8.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados s8.</td></tr>
+<tr><td><code>left</code></td><td>Índice esquerdo (deve ser 0).</td></tr>
+<tr><td><code>right</code></td><td>Índice direito (deve ser tamanho do array - 1).</td></tr></table></article>
+<article class="fn" id="fn-qsort_u16"><h4><code>void qsort_u16(u16 *data, u16 left, u16 right)</code></h4>
+<p>Algoritmo quicksort sobre um array de dados u16.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados u16.</td></tr>
+<tr><td><code>left</code></td><td>Índice esquerdo (deve ser 0).</td></tr>
+<tr><td><code>right</code></td><td>Índice direito (deve ser tamanho do array - 1).</td></tr></table></article>
+<article class="fn" id="fn-qsort_s16"><h4><code>void qsort_s16(s16 *data, u16 left, u16 right)</code></h4>
+<p>Algoritmo quicksort sobre um array de dados s16.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados s16.</td></tr>
+<tr><td><code>left</code></td><td>Índice esquerdo (deve ser 0).</td></tr>
+<tr><td><code>right</code></td><td>Índice direito (deve ser tamanho do array - 1).</td></tr></table></article>
+<article class="fn" id="fn-qsort_u32"><h4><code>void qsort_u32(u32 *data, u16 left, u16 right)</code></h4>
+<p>Algoritmo quicksort sobre um array de dados u32.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados u32.</td></tr>
+<tr><td><code>left</code></td><td>Índice esquerdo (deve ser 0).</td></tr>
+<tr><td><code>right</code></td><td>Índice direito (deve ser tamanho do array - 1).</td></tr></table></article>
+<article class="fn" id="fn-qsort_s32"><h4><code>void qsort_s32(s32 *data, u16 left, u16 right)</code></h4>
+<p>Algoritmo quicksort sobre um array de dados s32.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados s32.</td></tr>
+<tr><td><code>left</code></td><td>Índice esquerdo (deve ser 0).</td></tr>
+<tr><td><code>right</code></td><td>Índice direito (deve ser tamanho do array - 1).</td></tr></table></article>
+<article class="fn" id="fn-qsort"><h4><code>void qsort(void** data, u16 len, _comparatorCallback* cb)</code></h4>
+<p>Algoritmo quicksort sobre um array de ponteiros (objetos), usando um callback de comparação.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Array de ponteiros (ponteiros para os objetos a ordenar).</td></tr>
+<tr><td><code>len</code></td><td>Número de elementos no array.</td></tr>
+<tr><td><code>cb</code></td><td>Callback comparador usado para comparar 2 objetos (ver <code>_comparatorCallback</code>).</td></tr></table></article>
+</div>
+</section>
+<section class="module" id="mod-types">
+<h2>types.h <span class="subtitle">Definições de tipos do SGDK</span></h2>
+<p class="mod-desc">Este header define as convenções de tipos usadas em todo o SGDK. Em vez dos tipos padrão do C, o kit usa nomes curtos e explícitos quanto ao tamanho: <code>u8</code>/<code>s8</code> (8 bits sem/com sinal), <code>u16</code>/<code>s16</code> (16 bits) e <code>u32</code>/<code>s32</code> (32 bits) — importantes no Motorola 68000, onde operações de 16 bits são mais rápidas que as de 32. Há variantes <code>volatile</code> (<code>vu8</code>, <code>vs16</code> etc., para registradores de hardware), um tipo <code>bool</code> próprio (com as constantes <code>TRUE</code>/<code>FALSE</code> e <code>true</code>/<code>false</code>), aliases compatíveis com <code>stdint.h</code> (<code>uint16_t</code> etc.), limites numéricos (<code>U8_MAX</code>, <code>S16_MIN</code>...), e os tipos de ponto fixo <code>fix16</code> (10.6), <code>fix32</code> (22.10), <code>fastfix16</code> (8.8) e <code>fastfix32</code> (16.16), já que o 68000 não tem ponto flutuante. Também define estruturas geométricas simples (<code>Box</code>, <code>Circle</code>) e o tipo de callback <code>VoidCallback</code>. Note que macros de otimização como <code>FORCE_INLINE</code> e <code>NO_INLINE</code>, muito usadas junto a estas convenções, são definidas em outros headers do SGDK (config.h/compiler); aqui é definida a macro vazia <code>FASTCALL</code>.</p>
+<div class="defines"><h3>Constantes e macros</h3>
+<table class="def-table"><tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>FALSE</code> / <code>TRUE</code></td><td>0 / 1</td><td>Constantes booleanas clássicas.</td></tr>
+<tr><td><code>NULL</code></td><td>0</td><td>Ponteiro nulo.</td></tr>
+<tr><td><code>false</code> / <code>true</code></td><td>FALSE / TRUE</td><td>Versões minúsculas das constantes booleanas (quando não definidas pelo compilador/C23).</td></tr>
+<tr><td><code>U8_MIN</code>..<code>U8_MAX</code>, <code>S8_MIN</code>..<code>S8_MAX</code></td><td>0x00..0xFF, -0x80..0x7F</td><td>Limites dos tipos de 8 bits.</td></tr>
+<tr><td><code>U16_MIN</code>..<code>U16_MAX</code>, <code>S16_MIN</code>..<code>S16_MAX</code></td><td>0x0000..0xFFFF, -0x8000..0x7FFF</td><td>Limites dos tipos de 16 bits.</td></tr>
+<tr><td><code>U32_MIN</code>..<code>U32_MAX</code>, <code>S32_MIN</code>..<code>S32_MAX</code></td><td>0x00000000..0xFFFFFFFF, -0x80000000..0x7FFFFFFF</td><td>Limites dos tipos de 32 bits.</td></tr>
+<tr><td><code>uint8_t</code>/<code>int8_t</code> .. <code>uint32_t</code>/<code>int32_t</code></td><td>u8/s8 .. u32/s32</td><td>Aliases de compatibilidade com <code>stdint.h</code> (definidos apenas se ainda não existirem).</td></tr>
+<tr><td><code>size_t</code> / <code>ptrdiff_t</code></td><td>u32</td><td>Aliases de compatibilidade para tamanho e diferença de ponteiros (quando não definidos).</td></tr>
+<tr><td><code>FASTCALL</code></td><td>(vazio)</td><td>Macro vazia mantida por compatibilidade de convenção de chamada.</td></tr>
+</table></div>
+<div class="types"><h3>Tipos</h3>
+<article class="type" id="type-s8"><h4><code>s8 / s16 / s32</code></h4>
+<p>Inteiros com sinal de 8, 16 e 32 bits (equivalentes a <code>char</code>, <code>short</code> e <code>long</code>).</p>
+<pre class="code">typedef char  s8;    /* inteiro com sinal de 8 bits  */
+typedef short s16;   /* inteiro com sinal de 16 bits */
+typedef long  s32;   /* inteiro com sinal de 32 bits */</pre></article>
+<article class="type" id="type-u8"><h4><code>u8 / u16 / u32</code></h4>
+<p>Inteiros sem sinal de 8, 16 e 32 bits (equivalentes a <code>unsigned char</code>, <code>unsigned short</code> e <code>unsigned long</code>).</p>
+<pre class="code">typedef unsigned char  u8;    /* inteiro sem sinal de 8 bits  */
+typedef unsigned short u16;   /* inteiro sem sinal de 16 bits */
+typedef unsigned long  u32;   /* inteiro sem sinal de 32 bits */</pre></article>
+<article class="type" id="type-size_t"><h4><code>size_t</code></h4>
+<p>Tipo de tamanho (equivalente a <code>unsigned long</code>).</p>
+<pre class="code">typedef unsigned long size_t;  /* tipo de tamanho */</pre></article>
+<article class="type" id="type-bool"><h4><code>bool</code></h4>
+<p>Tipo booleano, a usar com as constantes <code>TRUE</code>/<code>true</code> e <code>FALSE</code>/<code>false</code>. Internamente é um <code>unsigned char</code>; só é definido quando não se compila em C++ nem em C23 (que já têm <code>bool</code> nativo).</p>
+<pre class="code">typedef u8 bool;   /* booleano (internamente unsigned char) */</pre></article>
+<article class="type" id="type-vs8"><h4><code>vs8 / vs16 / vs32 / vu8 / vu16 / vu32 / vbool</code></h4>
+<p>Variantes <code>volatile</code> dos tipos inteiros e do booleano, para acesso a registradores de hardware e variáveis modificadas em interrupções.</p>
+<pre class="code">typedef volatile s8  vs8;    /* s8 volatile  */
+typedef volatile s16 vs16;   /* s16 volatile */
+typedef volatile s32 vs32;   /* s32 volatile */
+typedef volatile u8  vu8;    /* u8 volatile  */
+typedef volatile u16 vu16;   /* u16 volatile */
+typedef volatile u32 vu32;   /* u32 volatile */
+typedef vu8 vbool;           /* booleano volatile */</pre></article>
+<article class="type" id="type-p16"><h4><code>p16</code></h4>
+<p>Ponteiro curto para endereçamento rápido de 16 bits (o GCC converte corretamente para ponteiro). Limitado à região de memória 0xFFFF8000-0x00007FFF (primeiro banco de 32KB da ROM e últimos 32KB da RAM).</p>
+<pre class="code">typedef s16 p16;   /* ponteiro curto de 16 bits */</pre></article>
+<article class="type" id="type-fix16"><h4><code>fix16 / f16</code></h4>
+<p>Ponto fixo de 16 bits no formato 10.6 (10 bits inteiros, 6 fracionários); <code>f16</code> é a versão curta do nome.</p>
+<pre class="code">typedef s16 fix16;   /* ponto fixo 10.6 */
+typedef s16 f16;     /* idem, nome curto */</pre></article>
+<article class="type" id="type-fix32"><h4><code>fix32 / f32</code></h4>
+<p>Ponto fixo de 32 bits no formato 22.10 (22 bits inteiros, 10 fracionários); <code>f32</code> é a versão curta do nome.</p>
+<pre class="code">typedef s32 fix32;   /* ponto fixo 22.10 */
+typedef s32 f32;     /* idem, nome curto */</pre></article>
+<article class="type" id="type-fastfix16"><h4><code>fastfix16 / ff16</code></h4>
+<p>Ponto fixo "rápido" de 16 bits no formato 8.8; <code>ff16</code> é a versão curta do nome.</p>
+<pre class="code">typedef s16 fastfix16;   /* ponto fixo 8.8 */
+typedef s16 ff16;        /* idem, nome curto */</pre></article>
+<article class="type" id="type-fastfix32"><h4><code>fastfix32 / ff32</code></h4>
+<p>Ponto fixo "rápido" de 32 bits no formato 16.16; <code>ff32</code> é a versão curta do nome.</p>
+<pre class="code">typedef s32 fastfix32;   /* ponto fixo 16.16 */
+typedef s32 ff32;        /* idem, nome curto */</pre></article>
+<article class="type" id="type-vfix16"><h4><code>vfix16 / vfix32 / vf16 / vf32</code></h4>
+<p>Variantes <code>volatile</code> dos tipos de ponto fixo.</p>
+<pre class="code">typedef vs16 vfix16;   /* fix16 volatile (10.6)  */
+typedef vs32 vfix32;   /* fix32 volatile (22.10) */
+typedef vs16 vf16;     /* idem, nome curto */
+typedef vs32 vf32;     /* idem, nome curto */</pre></article>
+<article class="type" id="type-Box"><h4><code>Box</code></h4>
+<p>Estrutura simples de retângulo (caixa), usada por exemplo em testes de colisão.</p>
+<pre class="code">typedef struct
+{
+    s16 x;   /* posicao X (esquerda) */
+    s16 y;   /* posicao Y (topo)     */
+    u16 w;   /* largura              */
+    u16 h;   /* altura               */
+} Box;</pre></article>
+<article class="type" id="type-Circle"><h4><code>Circle</code></h4>
+<p>Estrutura simples de círculo.</p>
+<pre class="code">typedef struct
+{
+    s16 x;     /* posicao X do centro */
+    s16 y;     /* posicao Y do centro */
+    u16 ray;   /* raio do circulo     */
+} Circle;</pre></article>
+<article class="type" id="type-VoidCallback"><h4><code>VoidCallback</code></h4>
+<p>Tipo de função de callback sem parâmetros e sem retorno, usado em vários pontos do SGDK (interrupções, eventos etc.).</p>
+<pre class="code">typedef void VoidCallback(void);</pre></article>
+</div>
+<div class="functions"><h3>Funções</h3>
+<article class="fn" id="fn-getZeroU8"><h4><code>u8 getZeroU8(void)</code></h4>
+<p>Retorna o valor zero como u8. Útil para impedir que o compilador faça otimizações baseadas em valor constante (o valor vem de uma chamada de função opaca).</p>
+<p class="returns"><strong>Retorna:</strong> 0 (como u8).</p></article>
+<article class="fn" id="fn-getZeroU16"><h4><code>u16 getZeroU16(void)</code></h4>
+<p>Retorna o valor zero como u16 (mesma finalidade de <code>getZeroU8()</code>).</p>
+<p class="returns"><strong>Retorna:</strong> 0 (como u16).</p></article>
+<article class="fn" id="fn-getZeroU32"><h4><code>u32 getZeroU32(void)</code></h4>
+<p>Retorna o valor zero como u32 (mesma finalidade de <code>getZeroU8()</code>).</p>
+<p class="returns"><strong>Retorna:</strong> 0 (como u32).</p></article>
+</div>
+</section>
+<section class="module" id="mod-kdebug">
+<h2>kdebug.h <span class="subtitle">Depuração via emulador (Gens KMod)</span></h2>
+<p class="mod-desc">Este módulo dá acesso aos recursos de depuração do Gens KMod, uma versão modificada do emulador Gens com ferramentas de desenvolvimento. As funções escrevem em registradores especiais que o emulador intercepta — em hardware real elas não têm efeito. Outros emuladores modernos, como o <strong>Blastem</strong>, também reconhecem esse protocolo de debug, portanto as mensagens e o controle de execução funcionam neles igualmente. Use estas funções (ou as mais convenientes <code>kprintf()</code>/<code>KLog_*</code> de tools.h, construídas sobre elas) para exibir mensagens no console do emulador, pausar a execução e medir tempo entre dois pontos do código.</p>
+<div class="functions"><h3>Funções</h3>
+<article class="fn" id="fn-KDebug_Halt"><h4><code>void KDebug_Halt(void)</code></h4>
+<p>Pausa (halt) a execução do jogo no emulador, como um breakpoint disparado por software. Não tem efeito em hardware real.</p></article>
+<article class="fn" id="fn-KDebug_Alert"><h4><code>void KDebug_Alert(const char *str)</code></h4>
+<p>Exibe a string especificada no console de mensagens do emulador (Gens KMod / Blastem).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>str</code></td><td>Texto a exibir no console de debug do emulador.</td></tr></table></article>
+<article class="fn" id="fn-KDebug_AlertNumber"><h4><code>void KDebug_AlertNumber(u32 nVal)</code></h4>
+<p>Exibe o valor numérico especificado no console de mensagens do emulador.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>nVal</code></td><td>Valor u32 a exibir no console de debug do emulador.</td></tr></table></article>
+<article class="fn" id="fn-KDebug_StartTimer"><h4><code>void KDebug_StartTimer(void)</code></h4>
+<p>Inicia o cronômetro de depuração do emulador, para medir o tempo/ciclos gastos em um trecho de código (ver <code>KDebug_StopTimer()</code>).</p></article>
+<article class="fn" id="fn-KDebug_StopTimer"><h4><code>void KDebug_StopTimer(void)</code></h4>
+<p>Encerra o cronômetro de depuração iniciado com <code>KDebug_StartTimer()</code> e reporta o resultado no emulador.</p></article>
+</div>
+</section>
+<section class="module" id="mod-mapper">
+<h2>mapper.h <span class="subtitle">Mapper e bank switching (ROMs maiores que 4MB)</span></h2>
+<p class="mod-desc">O Mega Drive endereça nativamente apenas 4MB de ROM. Este módulo fornece as ferramentas para lidar com ROMs maiores usando <strong>bank switching</strong> (troca de bancos) através do mapper oficial da SEGA (o mesmo usado em Super Street Fighter II). O mecanismo enxerga os 4MB endereçáveis como 8 regiões de 512KB: a primeira (0x000000-0x07FFFF) é fixa, pois contém a tabela de vetores; as outras 7 podem ser remapeadas escrevendo o número do banco desejado (byte) nos registradores <code>0xA130F3</code> a <code>0xA130FF</code> — cada registrador controla uma região de 512KB. Como o número de página usa 6 bits, são possíveis até 64 páginas = 32MB de ROM. Ex.: escrever 0x08 em <code>0xA130F9</code> torna os primeiros 512KB do 1MB superior (normalmente invisível) visíveis em 0x200000-0x27FFFF.</p>
+<p class="mod-desc">Além do controle manual de bancos (<code>SYS_setBank()</code>), o módulo oferece acesso conveniente a dados "far" (além dos 4MB) via <code>SYS_getFarData*()</code> e as macros <code>FAR()</code>/<code>FAR_SAFE()</code>, que usam as regiões 6 e 7 (0x300000-0x3FFFFF) como janelas remapeáveis. A flag <code>ENABLE_BANK_SWITCH</code> em config.h habilita a troca automática de banco no acesso a dados binários gerados pelo rescomp.</p>
+<div class="defines"><h3>Constantes e macros</h3>
+<table class="def-table"><tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>MAPPER_BASE</code></td><td>0xA130F1</td><td>Endereço base dos registradores do mapper oficial SEGA.</td></tr>
+<tr><td><code>BANK_SIZE</code></td><td>0x80000</td><td>Tamanho de um banco: 512KB.</td></tr>
+<tr><td><code>BANK_IN_MASK</code></td><td>BANK_SIZE - 1</td><td>Máscara do deslocamento dentro do banco.</td></tr>
+<tr><td><code>BANK_OUT_MASK</code></td><td>0xFFFFFFFF ^ BANK_IN_MASK</td><td>Máscara da parte do endereço fora do banco (índice do banco).</td></tr>
+</table></div>
+<div class="functions"><h3>Funções</h3>
+<article class="fn" id="fn-FAR"><h4><code>FAR(data)</code></h4>
+<p>Macro funcional que dá acesso ao dado "far" especificado através do mecanismo oficial de bank switching da SEGA, quando necessário. Com <code>ENABLE_BANK_SWITCH != 0</code> expande para <code>SYS_getFarData((void*) (data))</code>; caso contrário expande para o próprio <code>data</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Dado (recurso binário) que queremos acessar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro válido para o dado acessível.</p></article>
+<article class="fn" id="fn-FAR_SAFE"><h4><code>FAR_SAFE(data, size)</code></h4>
+<p>Macro funcional equivalente a <code>FAR()</code>, mas segura quanto a dados que cruzam a fronteira entre dois bancos de 512KB. Com <code>ENABLE_BANK_SWITCH != 0</code> expande para <code>SYS_getFarDataSafe((void*) (data), size)</code>; caso contrário expande para <code>data</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Dado que queremos acessar.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho em bytes do bloco de dados.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro válido para o dado totalmente acessível.</p></article>
+<article class="fn" id="fn-SYS_resetBanks"><h4><code>void SYS_resetBanks()</code></h4>
+<p>Restaura todos os bancos ao seu valor inicial/padrão (chamada automaticamente no reset).</p></article>
+<article class="fn" id="fn-SYS_getBank"><h4><code>u16 SYS_getBank(u16 regionIndex)</code></h4>
+<p>Retorna o banco atualmente mapeado na região de índice especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>regionIndex</code></td><td>Índice da região de 512KB a consultar. Valores aceitos: 1-7, pois a região 0 (0x000000-0x07FFFF) é fixa.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o índice do banco de dados de 512KB efetivamente mapeado nessa região (0 a 63).</p></article>
+<article class="fn" id="fn-SYS_setBank"><h4><code>void SYS_setBank(u16 regionIndex, u16 bankIndex)</code></h4>
+<p>Define o banco mapeado na região de índice especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>regionIndex</code></td><td>Índice da região de 512KB a configurar. Valores aceitos: 1-7 (a região 0 é fixa).</td></tr>
+<tr><td><code>bankIndex</code></td><td>Índice do banco de dados de 512KB a mapear nessa região. Valores aceitos: 0-63.</td></tr></table></article>
+<article class="fn" id="fn-SYS_getFarData"><h4><code>void* SYS_getFarData(void* data)</code></h4>
+<p>Torna o recurso de dados binário especificado acessível e retorna um ponteiro para ele, usando bank switching quando necessário. Se o banco do dado já está acessível, a região é reutilizada; caso contrário, o banco de uma das regiões é trocado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Dado que queremos acessar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro válido para o dado acessível.</p>
+<p class="note"><strong>Atenção:</strong> este método usa a faixa 0x00300000-0x003FFFFF (2 regiões) para tornar o dado acessível via bank switching — cuidado ao acessar dados de bancos diferentes ao mesmo tempo. Veja também <code>SYS_getFarDataEx()</code> e <code>SYS_getFarDataSafe()</code>.</p></article>
+<article class="fn" id="fn-SYS_getFarDataEx"><h4><code>void* SYS_getFarDataEx(void* data, bool high)</code></h4>
+<p>Torna o recurso de dados binário especificado acessível e retorna um ponteiro para ele, escolhendo explicitamente a janela: usa a região 0x00300000-0x0037FFFF ou 0x00380000-0x003FFFFF conforme o valor de <code>high</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Dado "far" que queremos acessar.</td></tr>
+<tr><td><code>high</code></td><td>Se TRUE, usa o banco remapeável alto (0x380000-0x3FFFFF) para o acesso FAR; senão usa o baixo (0x300000-0x37FFFF).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro válido para o dado acessível.</p></article>
+<article class="fn" id="fn-SYS_isCrossingBank"><h4><code>bool SYS_isCrossingBank(void* data, u32 size)</code></h4>
+<p>Indica se o bloco de dados binário dado cruza a fronteira entre 2 bancos de 512KB.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro do dado "far".</td></tr>
+<tr><td><code>size</code></td><td>Tamanho (em bytes) do bloco de dados.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> TRUE se o bloco cruza 2 bancos de 512KB, FALSE caso contrário.</p></article>
+<article class="fn" id="fn-SYS_getFarDataSafe"><h4><code>void* SYS_getFarDataSafe(void* data, u32 size)</code></h4>
+<p>Versão segura de <code>SYS_getFarData()</code> para blocos que podem cruzar bancos: verifica se o dado atravessa a fronteira de banco e, nesse caso, configura as 2 regiões remapeáveis para tornar o dado totalmente acessível.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Dado "far" que queremos acessar.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho (em bytes) do bloco; deve ser &gt; 0 — se não souber o tamanho, use <code>SYS_getFarData()</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro válido para o dado totalmente acessível.</p>
+<p class="note"><strong>Atenção:</strong> usa a faixa 0x00300000-0x003FFFFF (2 regiões) via bank switching; cuidado ao acessar dados de bancos diferentes simultaneamente.</p></article>
+<article class="fn" id="fn-SYS_getFarDataSafeEx"><h4><code>void* SYS_getFarDataSafeEx(void* data, u32 size, bool high)</code></h4>
+<p>Versão de <code>SYS_getFarDataSafe()</code> com escolha explícita da janela: usa a região 0x00300000-0x0037FFFF ou 0x00380000-0x003FFFFF conforme <code>high</code>, e trata o caso de cruzamento de bancos configurando as 2 regiões remapeáveis.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Endereço do dado "far" que queremos acessar.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho (em bytes) do bloco; deve ser &gt; 0.</td></tr>
+<tr><td><code>high</code></td><td>Se TRUE, usa o banco remapeável alto; senão o baixo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro válido para o dado totalmente acessível.</p></article>
+<article class="fn" id="fn-SYS_getNextFarAccessRegion"><h4><code>bool SYS_getNextFarAccessRegion()</code></h4>
+<p>Recupera qual região (6 ou 7) será usada no próximo acesso FAR com bank switching quando o dado ainda não estiver acessível. Uso bem específico: serve principalmente para salvar esse estado e restaurá-lo com <code>SYS_setNextFarAccessRegion()</code> caso você precise trocar bancos temporariamente.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se a próxima região de acesso FAR é a alta (região 7), FALSE se é a baixa (região 6).</p></article>
+<article class="fn" id="fn-SYS_setNextFarAccessRegion"><h4><code>void SYS_setNextFarAccessRegion(bool high)</code></h4>
+<p>Define qual região (6 ou 7) será usada no próximo acesso FAR com bank switching quando o dado ainda não estiver acessível. Pode ser usada para restaurar o estado interno salvo via <code>SYS_getNextFarAccessRegion()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>high</code></td><td>TRUE para usar a região alta (7), FALSE para a baixa (6).</td></tr></table></article>
+</div>
+</section>
+<section class="module" id="mod-asm">
+<h2>asm.h <span class="subtitle">Auxiliares para assembly (inline e GAS)</span></h2>
+<p class="mod-desc">Este módulo fornece auxiliares para trabalhar com assembly inline no C e para incluir headers C em arquivos assembly (GAS, o GNU Assembler). De um lado, macros <code>VAR2REG_*</code>/<code>REG2VAR_*</code> movem valores entre variáveis C e registradores do Motorola 68000 (d0-d7/a0-a6) usando <code>asm volatile</code> com instruções <code>move.b</code>/<code>move.w</code>/<code>move.l</code>. De outro, as macros <code>ENUM_*</code> permitem declarar enumerações em um único arquivo compartilhado entre C e assembly: quando o arquivo é processado pelo assembler (<code>__ASSEMBLY__</code>/<code>__ASSEMBLER__</code> definidos) elas expandem para diretivas <code>.set</code>/<code>.equiv</code> do GAS; quando processado pelo compilador C, expandem para um <code>typedef enum</code> normal (com variantes <code>__attribute__ ((__packed__))</code> para enums curtos).</p>
+<div class="functions"><h3>Funções</h3>
+<article class="fn" id="fn-VAR2REG_B"><h4><code>VAR2REG_B(var, reg)</code></h4>
+<p>Macro funcional que move o byte (8 bits) da variável C <code>var</code> para o registrador 68000 indicado, via <code>asm volatile ("move.b ...")</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>var</code></td><td>Variável C de origem.</td></tr>
+<tr><td><code>reg</code></td><td>Nome do registrador de destino, como string (ex.: "d0", "a1").</td></tr></table></article>
+<article class="fn" id="fn-VAR2REG_W"><h4><code>VAR2REG_W(var, reg)</code></h4>
+<p>Macro funcional que move a word (16 bits) da variável C <code>var</code> para o registrador 68000 indicado (<code>move.w</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>var</code></td><td>Variável C de origem.</td></tr>
+<tr><td><code>reg</code></td><td>Nome do registrador de destino, como string.</td></tr></table></article>
+<article class="fn" id="fn-VAR2REG_L"><h4><code>VAR2REG_L(var, reg)</code></h4>
+<p>Macro funcional que move o long (32 bits) da variável C <code>var</code> para o registrador 68000 indicado (<code>move.l</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>var</code></td><td>Variável C de origem.</td></tr>
+<tr><td><code>reg</code></td><td>Nome do registrador de destino, como string.</td></tr></table></article>
+<article class="fn" id="fn-REG2VAR_B"><h4><code>REG2VAR_B(reg, var)</code></h4>
+<p>Macro funcional que move o byte (8 bits) do registrador 68000 indicado para a variável C <code>var</code> (<code>move.b</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>reg</code></td><td>Nome do registrador de origem, como string (ex.: "d0").</td></tr>
+<tr><td><code>var</code></td><td>Variável C de destino.</td></tr></table></article>
+<article class="fn" id="fn-REG2VAR_W"><h4><code>REG2VAR_W(reg, var)</code></h4>
+<p>Macro funcional que move a word (16 bits) do registrador 68000 indicado para a variável C <code>var</code> (<code>move.w</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>reg</code></td><td>Nome do registrador de origem, como string.</td></tr>
+<tr><td><code>var</code></td><td>Variável C de destino.</td></tr></table></article>
+<article class="fn" id="fn-REG2VAR_L"><h4><code>REG2VAR_L(reg, var)</code></h4>
+<p>Macro funcional que move o long (32 bits) do registrador 68000 indicado para a variável C <code>var</code> (<code>move.l</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>reg</code></td><td>Nome do registrador de origem, como string.</td></tr>
+<tr><td><code>var</code></td><td>Variável C de destino.</td></tr></table></article>
+<article class="fn" id="fn-ENUM_BEGIN"><h4><code>ENUM_BEGIN</code></h4>
+<p>Abre a declaração de uma enumeração compartilhada entre C e assembly. Em C expande para <code>typedef enum {</code>; em GAS expande para <code>.set last_enum_value, 0</code> (zera o contador de valores).</p></article>
+<article class="fn" id="fn-ENUM_BEGIN_EX"><h4><code>ENUM_BEGIN_EX(tmpName)</code></h4>
+<p>Como <code>ENUM_BEGIN</code>, mas dando um nome (tag) temporário ao enum em C: expande para <code>typedef enum tmpName {</code>. Em GAS, comporta-se como <code>ENUM_BEGIN</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tmpName</code></td><td>Nome (tag) temporário do enum em C.</td></tr></table></article>
+<article class="fn" id="fn-ENUM_BEGIN_SHORT"><h4><code>ENUM_BEGIN_SHORT</code></h4>
+<p>Como <code>ENUM_BEGIN</code>, mas em C declara um enum compacto: expande para <code>typedef enum __attribute__ ((__packed__)) {</code> (o compilador usa o menor tipo inteiro possível). Em GAS, comporta-se como <code>ENUM_BEGIN</code>.</p></article>
+<article class="fn" id="fn-ENUM_BEGIN_SHORT_EX"><h4><code>ENUM_BEGIN_SHORT_EX(tmpName)</code></h4>
+<p>Combina <code>ENUM_BEGIN_SHORT</code> e <code>ENUM_BEGIN_EX</code>: enum compacto (<code>__packed__</code>) com nome temporário em C. Em GAS, comporta-se como <code>ENUM_BEGIN</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tmpName</code></td><td>Nome (tag) temporário do enum em C.</td></tr></table></article>
+<article class="fn" id="fn-ENUM_VAL"><h4><code>ENUM_VAL(name)</code></h4>
+<p>Declara um valor da enumeração com valor implícito (sequencial). Em C expande para <code>name,</code>; em GAS invoca a macro <code>enum_val</code>, que faz <code>.equiv name, last_enum_value</code> e incrementa o contador.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome do valor da enumeração.</td></tr></table></article>
+<article class="fn" id="fn-ENUM_VALASSIGN"><h4><code>ENUM_VALASSIGN(name, value)</code></h4>
+<p>Declara um valor da enumeração com valor explícito. Em C expande para <code>name = value,</code>; em GAS ajusta o contador (<code>.set last_enum_value, value</code>) antes de definir o símbolo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome do valor da enumeração.</td></tr>
+<tr><td><code>value</code></td><td>Valor numérico atribuído.</td></tr></table></article>
+<article class="fn" id="fn-ENUM_END"><h4><code>ENUM_END(enum_name)</code></h4>
+<p>Fecha a declaração da enumeração. Em C expande para <code>} enum_name;</code> (concluindo o typedef); em GAS expande para nada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>enum_name</code></td><td>Nome final do tipo enum em C.</td></tr></table></article>
+</div>
+</section>

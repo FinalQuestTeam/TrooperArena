@@ -1,0 +1,149 @@
+// Fases: dispatcher (carga/desenho, atualização dos elementos, HUD de condições).
+// A CURVA de dificuldade está em levels/defs/level01.c .. level15.c (uma por
+// arquivo); os terrenos reutilizáveis em levels/layouts.c.
+
+#include "levels/levels.h"
+#include "system/video/sprites/tiles.h"
+#include "system/video/enemygfx.h"
+#include "core/game.h"
+#include "elements/lava.h"
+#include "elements/mud.h"
+
+u8 currentLevel = 1;
+u8 testStage = 1;
+
+// registro das 15 fases (uma por arquivo em levels/defs/)
+static const LevelDef *const levelDefs[LEVEL_COUNT] =
+{
+    &LEVEL01_def, &LEVEL02_def, &LEVEL03_def, &LEVEL04_def, &LEVEL05_def,
+    &LEVEL06_def, &LEVEL07_def, &LEVEL08_def, &LEVEL09_def, &LEVEL10_def,
+    &LEVEL11_def, &LEVEL12_def, &LEVEL13_def, &LEVEL14_def, &LEVEL15_def,
+    &LEVEL16_def,
+};
+
+// dados das fases teste (TEST_def / TEST2_def) vivem em levels/defs/test.c
+
+const LevelDef *LEVEL_current(void)
+{
+    if (currentLevel == 0)
+        return (testStage == 3) ? &TEST3_def : (testStage == 2) ? &TEST2_def : &TEST_def;
+    return levelDefs[currentLevel - 1];
+}
+
+static void drawBorder(void)
+{
+    const u16 attr = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, TILE_USER_INDEX + TILE_WALL);
+    VDP_fillTileMapRect(BG_A, attr, ARENA_TILE_X, ARENA_TILE_Y, ARENA_TILES_W, 1);
+    VDP_fillTileMapRect(BG_A, attr, ARENA_TILE_X, ARENA_TILE_Y + ARENA_TILES_H - 1, ARENA_TILES_W, 1);
+    VDP_fillTileMapRect(BG_A, attr, ARENA_TILE_X, ARENA_TILE_Y, 1, ARENA_TILES_H);
+    VDP_fillTileMapRect(BG_A, attr, ARENA_TILE_X + ARENA_TILES_W - 1, ARENA_TILE_Y, 1, ARENA_TILES_H);
+}
+
+void LEVEL_draw(u8 n)
+{
+    currentLevel = n;
+
+    // limpa o interior da arena (apaga elementos anteriores e textos)
+    VDP_fillTileMapRect(BG_A, TILE_ATTR_FULL(PAL0, FALSE, FALSE, FALSE, 0),
+        ARENA_TILE_X + 1, ARENA_TILE_Y + 1, ARENA_TILES_W - 2, ARENA_TILES_H - 2);
+
+    drawBorder();
+
+    const LevelDef *def = LEVEL_current();
+    if (def->lava) LAVA_draw(def->lava, def->lavaCount);
+    if (def->mud) MUD_draw(def->mud, def->mudCount);
+
+    // (o rótulo da fase no HUD saiu: o inventário ocupa a linha 0; a fase é
+    //  mostrada na tela de preparação e na pausa)
+}
+
+// última fase (1..LEVEL_COUNT) em que cada tipo de inimigo aparece; 0 = nunca
+// (inclui os alvos de teste, que não estão em nenhuma fase da campanha). Calculado
+// a partir dos rosters, então acompanha edições das fases sem número mágico.
+const u8 *LEVEL_typeLastPhase(void)
+{
+    static u8 last[ENEMY_TYPES];
+    static bool ready;
+    if (!ready)
+    {
+        for (u8 n = 1; n <= LEVEL_COUNT; n++)
+        {
+            const LevelDef *d = levelDefs[n - 1];
+            for (u16 i = 0; i < d->enemyTypeCount; i++)
+                last[d->enemyTypes[i]] = n;     // n cresce → fica a ÚLTIMA fase
+        }
+        ready = TRUE;
+    }
+    return last;
+}
+
+// carrega na VRAM a arte (8 direções) só dos inimigos que aparecem na fase n
+// (0 = fase teste, pelo testStage atual). Reuso + descarte no ENEMYGFX.
+void LEVEL_loadGfx(u8 n)
+{
+    const LevelDef *def =
+        (n == 0) ? ((testStage == 3) ? &TEST3_def : (testStage == 2) ? &TEST2_def : &TEST_def)
+                 : levelDefs[n - 1];
+    // fase teste roda "fora da campanha": 0xFF libera o descarte de qualquer tipo
+    ENEMYGFX_loadForPhase(n == 0 ? 0xFF : n, def->enemyTypes, def->enemyTypeCount);
+}
+
+void LEVEL_load(u8 n)
+{
+    LEVEL_loadGfx(n);       // arte dos inimigos desta fase (por etapas, com cache)
+    LEVEL_draw(n);
+    LEVEL_reset();
+}
+
+void LEVEL_update(void)
+{
+    const LevelDef *def = LEVEL_current();
+    if (def->lava) LAVA_update(def->lava, def->lavaCount);
+    if (def->mud) MUD_update(def->mud, def->mudCount);
+}
+
+void LEVEL_reset(void)
+{
+    LAVA_reset();
+    MUD_reset();
+}
+
+// desenha o inimigo (inseto) alinhado pela BASE em rowBase — assim tamanhos
+// diferentes (16/24/32) ficam numa mesma linha de "chão". O desenho em si é o
+// ENEMYGFX_drawOnMap (compartilhado com a tela de ajuda).
+static void drawEnemyOnMap(u8 type, u16 col, u16 rowBase, u8 size)
+{
+    const u16 nt = size / 8;                    // tiles por lado (2/3/4)
+    ENEMYGFX_drawOnMap(type, col, rowBase + 1 - nt);
+}
+
+void LEVEL_drawInfo(u8 n, u16 x, u16 y)
+{
+    const LevelDef *def = (n == 0) ? LEVEL_current() : levelDefs[n - 1];
+    char buf[40];
+
+    sprintf(buf, "META: MATE %d INIMIGOS", def->killTarget);
+    VDP_drawText(buf, x, y);
+
+    sprintf(buf, "INTERVALO DE SPAWN: %d S", def->spawnSeconds);
+    VDP_drawText(buf, x, y + 2);
+
+    // "INIMIGOS:" seguido dos SPRITES (insetos) dos tipos distintos da fase,
+    // alinhados pela base logo abaixo do rótulo
+    VDP_drawText("INIMIGOS:", x, y + 4);
+    const u16 rowBase = y + 8;
+    u16 col = x;
+    u16 shown = 0;                              // tipos já mostrados (bitmask)
+    for (u16 i = 0; i < def->enemyTypeCount; i++)
+    {
+        const u8 t = def->enemyTypes[i];
+        if (shown & (1 << t)) continue;
+        shown |= (1 << t);
+        const EnemyDef *e = ENEMY_DEFS[t];
+        if (e->size > 32) continue;             // chefe (48px, layout em quadrantes)
+        const u8 nt = e->size / 8;
+        if (col + nt > x + 30) break;           // não estoura a linha
+        drawEnemyOnMap(t, col, rowBase, e->size);
+        col += nt + 1;                          // largura + folga
+    }
+}

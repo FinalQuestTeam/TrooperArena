@@ -1,0 +1,1960 @@
+<section class="module" id="mod-megawifi">
+<h2>megawifi.h <span class="subtitle">API principal do MegaWiFi</span></h2>
+<p class="mod-desc">API principal do cartucho MegaWiFi, um cartucho para Mega Drive equipado com um módulo ESP8266 que fornece WiFi e uma pilha TCP/IP completa ao console. Por meio desta API o jogo pode detectar o módulo, configurar redes (SSID, senha, IPv4, SNTP), associar-se a um Access Point, abrir sockets TCP/UDP, realizar requisições HTTP/HTTPS, acessar a flash do módulo, obter data/hora, números aleatórios de hardware, gamertags e ainda usar a Game API (por exemplo, GameJolt). A maioria das chamadas é autoexplicativa; a única particularidade é o modo <em>reuse</em> de UDP: ao passar <code>dst_addr</code> e/ou <code>dst_port</code> como NULL em <code>mw_udp_set()</code>, os dados recebidos passam a vir prefixados com IP e porta do peer (estrutura <code>mw_reuse_payload</code>), e os dados a enviar também exigem esse prefixo. Requer <code>MODULE_MEGAWIFI = 1</code> em <code>config.h</code> (com reconstrução da biblioteca). Autores: Jesus Alonso (doragasu) e Juan Antonio (PaCHoN).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>MW_API_VERSION_MAJOR</code> / <code>MW_API_VERSION_MINOR</code></td><td>1 / 5</td><td>Versão da API implementada (maior/menor).</td></tr>
+<tr><td><code>MW_COMMAND_TOUT_MS</code></td><td>2000</td><td>Timeout de comandos padrão, em milissegundos.</td></tr>
+<tr><td><code>MW_CONNECT_TOUT_MS</code></td><td>10000</td><td>Timeout para conexões TCP (ms).</td></tr>
+<tr><td><code>MW_HTTP_OPEN_TOUT_MS</code></td><td>10000</td><td>Timeout do comando de abertura HTTP (ms).</td></tr>
+<tr><td><code>MW_SCAN_TOUT_MS</code></td><td>10000</td><td>Timeout do scan de APs (ms).</td></tr>
+<tr><td><code>MW_ASSOC_TOUT_MS</code></td><td>20000</td><td>Timeout da associação ao AP (ms).</td></tr>
+<tr><td><code>MW_ASSOC_WAIT_SLEEP_MS</code></td><td>5000</td><td>Tempo de espera antes de aguardar a associação (ms).</td></tr>
+<tr><td><code>MW_UPGRADE_TOUT_MS</code></td><td>600000</td><td>Timeout do comando de upgrade de firmware (ms).</td></tr>
+<tr><td><code>MW_PING_TOUT_MS</code></td><td>30000</td><td>Timeout do comando ping (ms).</td></tr>
+<tr><td><code>MW_STAT_POLL_MS</code></td><td>250</td><td>Intervalo entre consultas de status em <code>mw_ap_assoc_wait()</code> (ms).</td></tr>
+<tr><td><code>MW_SSID_MAXLEN</code> / <code>MW_PASS_MAXLEN</code></td><td>32 / 64</td><td>Comprimento máximo do SSID e da senha (incluindo <code>'\0'</code>).</td></tr>
+<tr><td><code>MW_NTP_POOL_MAXLEN</code></td><td>80</td><td>Comprimento máximo de uma URI de pool NTP (incluindo <code>'\0'</code>).</td></tr>
+<tr><td><code>MW_NUM_CFG_SLOTS</code></td><td>3</td><td>Número de configurações de AP gravadas na flash não volátil.</td></tr>
+<tr><td><code>MW_NUM_DNS_SERVERS</code></td><td>2</td><td>Servidores DNS suportados por configuração de AP.</td></tr>
+<tr><td><code>MW_FSM_QUEUE_LEN</code></td><td>8</td><td>Comprimento da fila da FSM.</td></tr>
+<tr><td><code>MW_MAX_SOCK</code></td><td>3</td><td>Número máximo de conexões TCP simultâneas.</td></tr>
+<tr><td><code>MW_CTRL_CH</code></td><td>0</td><td>Canal de controle do protocolo LSD.</td></tr>
+<tr><td><code>MW_HTTP_CH</code></td><td><code>LSD_MAX_CH - 1</code></td><td>Canal usado para requisições HTTP e envio de certificados.</td></tr>
+<tr><td><code>MW_CMD_MIN_BUFLEN</code></td><td>168</td><td>Tamanho mínimo do buffer de comandos para poder enviar todos os comandos com payload mínimo.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-mw_err">
+<h4><code>enum mw_err</code></h4>
+<p>Códigos de erro retornados pelas funções da API MegaWiFi.</p>
+<pre class="code">enum mw_err {
+    MW_ERR_NONE = 0,         // Sem erro (sucesso)
+    MW_ERR,                  // Erro genérico
+    MW_ERR_NOT_READY,        // Módulo não está pronto para o comando
+    MW_ERR_BUFFER_TOO_SHORT, // Buffer de comando pequeno demais
+    MW_ERR_PARAM,            // Parâmetro de entrada fora de faixa
+    MW_ERR_SEND,             // Erro ao enviar dados
+    MW_ERR_RECV              // Erro ao receber dados
+};</pre>
+</article>
+<article class="type" id="type-mw_http_method">
+<h4><code>enum mw_http_method</code></h4>
+<p>Métodos HTTP suportados pelo módulo.</p>
+<pre class="code">enum mw_http_method {
+    MW_HTTP_METHOD_GET = 0,     // GET
+    MW_HTTP_METHOD_POST,        // POST
+    MW_HTTP_METHOD_PUT,         // PUT
+    MW_HTTP_METHOD_PATCH,       // PATCH
+    MW_HTTP_METHOD_DELETE,      // DELETE
+    MW_HTTP_METHOD_HEAD,        // HEAD
+    MW_HTTP_METHOD_NOTIFY,      // NOTIFY
+    MW_HTTP_METHOD_SUBSCRIBE,   // SUBSCRIBE
+    MW_HTTP_METHOD_UNSUBSCRIBE, // UNSUBSCRIBE
+    MW_HTTP_METHOD_OPTIONS,     // OPTIONS
+    MW_HTTP_METHOD_MAX
+};</pre>
+</article>
+<article class="type" id="type-mw_ap_data">
+<h4><code>struct mw_ap_data</code></h4>
+<p>Dados de um Access Point encontrado durante o scan.</p>
+<pre class="code">struct mw_ap_data {
+    enum mw_security auth; // Tipo de segurança
+    uint8_t channel;       // Canal WiFi
+    int8_t rssi;           // Intensidade do sinal
+    uint8_t ssid_len;      // Comprimento do campo ssid
+    char *ssid;            // String do SSID (NÃO terminada em NULL)
+};</pre>
+</article>
+<article class="type" id="type-mw_if_type">
+<h4><code>enum mw_if_type</code></h4>
+<p>Tipo de interface para a função <code>mw_bssid_get()</code>.</p>
+<pre class="code">enum mw_if_type {
+    MW_IF_STATION = 0, // Interface station (cliente)
+    MW_IF_SOFTAP,      // Interface Access Point
+    MW_IF_MAX          // Número de tipos suportados
+};</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-mw_init">
+<h4><code>int16_t mw_init(uint16_t *cmd_buf, uint16_t buf_len)</code></h4>
+<p>Inicialização do módulo. Deve ser chamada uma vez, antes de qualquer outra função da API. Também inicializa a UART.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>cmd_buf</code></td><td>Ponteiro para o buffer usado para enviar e receber comandos.</td></tr>
+<tr><td><code>buf_len</code></td><td>Comprimento de <code>cmd_buf</code> em bytes.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_process">
+<h4><code>static inline void mw_process(void)</code></h4>
+<p>Processa envios/recepções de dados pendentes (delega para <code>lsd_process()</code>). Chame esta função com a maior frequência possível para processar o tráfego de entrada e saída.</p>
+<p class="note">Aviso: nenhum dado será enviado ou recebido se esta função não for invocada com frequência.</p>
+</article>
+<article class="fn" id="fn-mw_cmd_data_cb_set">
+<h4><code>void mw_cmd_data_cb_set(lsd_recv_cb cmd_recv_cb)</code></h4>
+<p>Define a função de callback executada quando dados de rede são recebidos enquanto se aguarda a resposta de um comando.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>cmd_recv_cb</code></td><td>Callback executado ao receber dados durante a espera pela resposta de um comando.</td></tr></table>
+<p class="note">Aviso: se este callback não for definido, dados recebidos durante a espera por uma resposta de comando serão descartados silenciosamente.</p>
+</article>
+<article class="fn" id="fn-mw_detect">
+<h4><code>enum mw_err mw_detect(uint8_t *major, uint8_t *minor, char **variant)</code></h4>
+<p>Executa a sequência de inicialização do módulo WiFi e tenta detectá-lo solicitando os dados de versão.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>major</code></td><td>[saída] Número maior da versão.</td></tr>
+<tr><td><code>minor</code></td><td>[saída] Número menor da versão.</td></tr>
+<tr><td><code>variant</code></td><td>[saída] String com a variante do firmware ("std" para a padrão).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_version_get">
+<h4><code>enum mw_err mw_version_get(uint8_t version[3], char **variant)</code></h4>
+<p>Obtém os números de versão do módulo e a string da variante do firmware.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>version</code></td><td>[saída] Números de versão (major, minor, micro), nesta ordem.</td></tr>
+<tr><td><code>variant</code></td><td>[saída] String com a variante do firmware ("std" para a padrão).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_bssid_get">
+<h4><code>uint8_t *mw_bssid_get(enum mw_if_type interface_type)</code></h4>
+<p>Obtém o BSSID do módulo (endereço MAC) para a interface especificada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>interface_type</code></td><td>Tipo da interface da qual obter o BSSID (station ou AP).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o BSSID solicitado (6 bytes binários), ou NULL em caso de erro.</p>
+</article>
+<article class="fn" id="fn-mw_default_cfg_set">
+<h4><code>enum mw_err mw_default_cfg_set(void)</code></h4>
+<p>Restaura a configuração padrão do módulo (configurações de fábrica).</p>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Para que o comando surta efeito, deve ser seguido de um reset do módulo.</p>
+</article>
+<article class="fn" id="fn-mw_ap_cfg_set">
+<h4><code>enum mw_err mw_ap_cfg_set(uint8_t slot, const char *ssid, const char *pass, enum mw_phy_type phy_type)</code></h4>
+<p>Define a configuração de um Access Point (SSID e senha) em um dos slots.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot de configuração a usar.</td></tr>
+<tr><td><code>ssid</code></td><td>String com o SSID do AP.</td></tr>
+<tr><td><code>pass</code></td><td>String com a senha do AP.</td></tr>
+<tr><td><code>phy_type</code></td><td>Bitmask com a configuração do tipo de PHY.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">As strings devem ser terminadas em NULL. Comprimento máximo: SSID 32 bytes, senha 64 bytes. Após uma chamada bem-sucedida, chame <code>mw_cfg_save()</code> para persistir as alterações.</p>
+</article>
+<article class="fn" id="fn-mw_ap_cfg_get">
+<h4><code>enum mw_err mw_ap_cfg_get(uint8_t slot, char **ssid, char **pass, enum mw_phy_type *phy_type)</code></h4>
+<p>Obtém a configuração de Access Point (SSID e senha) de um slot.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot de configuração a consultar.</td></tr>
+<tr><td><code>ssid</code></td><td>[saída] String com o SSID obtido.</td></tr>
+<tr><td><code>pass</code></td><td>[saída] String com a senha obtida.</td></tr>
+<tr><td><code>phy_type</code></td><td>[saída] Bitmask com a configuração do tipo de PHY.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Aviso: <code>ssid</code> é preenchido com zeros até 32 bytes e <code>pass</code> até 64 bytes. Se o SSID tiver 32 bytes (ou a senha 64), a string NÃO será terminada em NULL.</p>
+</article>
+<article class="fn" id="fn-mw_ip_cfg_set">
+<h4><code>enum mw_err mw_ip_cfg_set(uint8_t slot, const struct mw_ip_cfg *ip)</code></h4>
+<p>Define a configuração IPv4 de um slot.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot de configuração a usar.</td></tr>
+<tr><td><code>ip</code></td><td>Ponteiro para a estrutura <code>mw_ip_cfg</code> com a configuração IP.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Após uma chamada bem-sucedida, chame <code>mw_cfg_save()</code> para persistir as alterações.</p>
+</article>
+<article class="fn" id="fn-mw_ip_cfg_get">
+<h4><code>enum mw_err mw_ip_cfg_get(uint8_t slot, struct mw_ip_cfg **ip)</code></h4>
+<p>Obtém a configuração IPv4 de um slot.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot de configuração a consultar.</td></tr>
+<tr><td><code>ip</code></td><td>[saída] Ponteiro duplo para a estrutura <code>mw_ip_cfg</code> com a configuração IP.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_wifi_adv_cfg_set">
+<h4><code>enum mw_err mw_wifi_adv_cfg_set(const struct mw_wifi_adv_cfg *wifi)</code></h4>
+<p>Define a configuração avançada de WiFi.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>wifi</code></td><td>Estrutura com os parâmetros avançados de WiFi.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Aviso: função perigosa. Alterar esses parâmetros raramente é necessário; valores incorretos podem tornar a conexão instável e até travar o módulo em bootloop, exigindo um programador para recuperá-lo. A recomendação é obter a configuração atual com <code>mw_wifi_adv_cfg_get()</code> e alterar somente o necessário. Os parâmetros só têm efeito após <code>mw_cfg_save()</code> e reboot do módulo.</p>
+</article>
+<article class="fn" id="fn-mw_wifi_adv_cfg_get">
+<h4><code>struct mw_wifi_adv_cfg *mw_wifi_adv_cfg_get(void)</code></h4>
+<p>Obtém a configuração avançada de WiFi.</p>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a configuração avançada de WiFi, ou NULL em caso de erro.</p>
+</article>
+<article class="fn" id="fn-mw_cfg_save">
+<h4><code>enum mw_err mw_cfg_save(void)</code></h4>
+<p>Grava os parâmetros de configuração alterados na memória não volátil do módulo.</p>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_ip_current">
+<h4><code>enum mw_err mw_ip_current(struct mw_ip_cfg **ip)</code></h4>
+<p>Obtém a configuração IP atual, do AP ao qual o módulo está associado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ip</code></td><td>[saída] Ponteiro duplo para a estrutura <code>mw_ip_cfg</code> com a configuração IP.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_ap_scan">
+<h4><code>int16_t mw_ap_scan(enum mw_phy_type phy_type, char **ap_data, uint8_t *aps)</code></h4>
+<p>Faz uma varredura (scan) de Access Points.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>phy_type</code></td><td>Bitmask com a configuração do tipo de PHY.</td></tr>
+<tr><td><code>ap_data</code></td><td>[saída] Dados dos APs encontrados, no formato da estrutura <code>mw_ap_data</code>.</td></tr>
+<tr><td><code>aps</code></td><td>[saída] Número de APs encontrados.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> comprimento em bytes dos dados de saída se a operação for concluída com sucesso, ou -1 se o scan falhar.</p>
+</article>
+<article class="fn" id="fn-mw_ap_fill_next">
+<h4><code>int16_t mw_ap_fill_next(const char *ap_data, uint16_t pos, struct mw_ap_data *apd, uint16_t data_len)</code></h4>
+<p>Interpreta os dados brutos recebidos do scan e preenche as informações do AP na posição <code>pos</code>. Útil para extrair as informações de cada AP a partir dos dados obtidos com <code>mw_ap_scan()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ap_data</code></td><td>Dados de APs obtidos de <code>mw_ap_scan()</code>.</td></tr>
+<tr><td><code>pos</code></td><td>Posição da qual extrair os dados.</td></tr>
+<tr><td><code>apd</code></td><td>[saída] Ponteiro para os dados extraídos de um AP.</td></tr>
+<tr><td><code>data_len</code></td><td>Comprimento de <code>ap_data</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> posição da próxima entrada de AP em <code>ap_data</code>, 0 se não houver mais APs disponíveis, ou <code>MW_ERROR</code> se a combinação dados/posição for inválida.</p>
+<p class="note">Executa localmente; não se comunica com o módulo WiFi.</p>
+</article>
+<article class="fn" id="fn-mw_ap_assoc">
+<h4><code>enum mw_err mw_ap_assoc(uint8_t slot)</code></h4>
+<p>Tenta associar-se a um AP. Em caso de sucesso, também configura o IPv4.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot de configuração a usar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> se a operação de associação foi iniciada com sucesso.</p>
+</article>
+<article class="fn" id="fn-mw_ap_assoc_wait">
+<h4><code>enum mw_err mw_ap_assoc_wait(int16_t tout_frames)</code></h4>
+<p>Consulta o status do módulo até que ele informe que o dispositivo está associado ao AP ou até estourar o timeout.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tout_frames</code></td><td>Número máximo de frames a esperar pela associação. Use <code>TSK_PEND_FOREVER</code> para espera infinita.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> se o dispositivo está associado ao AP; <code>MW_ERR_NOT_READY</code> se o timeout expirou.</p>
+</article>
+<article class="fn" id="fn-mw_def_ap_cfg">
+<h4><code>enum mw_err mw_def_ap_cfg(uint8_t slot)</code></h4>
+<p>Define o slot de configuração AP/IP padrão.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot de configuração a definir como padrão.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Após uma chamada bem-sucedida, chame <code>mw_cfg_save()</code> para persistir as alterações.</p>
+</article>
+<article class="fn" id="fn-mw_ap_disassoc">
+<h4><code>enum mw_err mw_ap_disassoc(void)</code></h4>
+<p>Desassocia-se de um AP previamente associado.</p>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_def_ap_cfg_get">
+<h4><code>int16_t mw_def_ap_cfg_get(void)</code></h4>
+<p>Obtém o slot de configuração AP/IP padrão.</p>
+<p class="returns"><strong>Retorna:</strong> o slot de configuração padrão, ou -1 em caso de erro.</p>
+</article>
+<article class="fn" id="fn-mw_tcp_connect">
+<h4><code>enum mw_err mw_tcp_connect(uint8_t ch, const char *dst_addr, const char *dst_port, const char *src_port)</code></h4>
+<p>Tenta estabelecer uma conexão TCP com o servidor especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal usado para a conexão.</td></tr>
+<tr><td><code>dst_addr</code></td><td>Endereço (IP ou nome DNS) do servidor.</td></tr>
+<tr><td><code>dst_port</code></td><td>Porta em que o servidor escuta.</td></tr>
+<tr><td><code>src_port</code></td><td>Porta de origem da conexão. Use 0 ou string vazia para alocação automática.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código se a conexão falhou.</p>
+</article>
+<article class="fn" id="fn-mw_close">
+<h4><code>enum mw_err mw_close(uint8_t ch)</code></h4>
+<p>Fecha e desconecta o socket do canal especificado. Pode ser usada para liberar o canal associado tanto a sockets TCP quanto UDP.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal associado ao socket a desconectar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_tcp_disconnect">
+<h4><code>mw_tcp_disconnect(ch)</code> <em>(macro)</em></h4>
+<p>Fecha um socket TCP. É um alias de <code>mw_close()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal associado ao socket a desconectar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o mesmo que <code>mw_close()</code>.</p>
+</article>
+<article class="fn" id="fn-mw_udp_set">
+<h4><code>enum mw_err mw_udp_set(uint8_t ch, const char *dst_addr, const char *dst_port, const char *src_port)</code></h4>
+<p>Configura um socket UDP para enviar/receber dados.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal usado para a comunicação.</td></tr>
+<tr><td><code>dst_addr</code></td><td>Endereço (IP ou nome DNS) para o qual enviar dados.</td></tr>
+<tr><td><code>dst_port</code></td><td>Porta de destino.</td></tr>
+<tr><td><code>src_port</code></td><td>Porta local para escutar mensagens.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código se a configuração falhou.</p>
+<p class="note">Definir <code>dst_addr</code> e/ou <code>dst_port</code> como NULL habilita o modo <em>reuse</em>.</p>
+</article>
+<article class="fn" id="fn-mw_udp_unset">
+<h4><code>mw_udp_unset(ch)</code> <em>(macro)</em></h4>
+<p>Libera um socket UDP. É um alias de <code>mw_close()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal associado ao socket a liberar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o mesmo que <code>mw_close()</code>.</p>
+</article>
+<article class="fn" id="fn-mw_tcp_bind">
+<h4><code>enum mw_err mw_tcp_bind(uint8_t ch, uint16_t port)</code></h4>
+<p>Vincula (bind) um socket a uma porta e escuta conexões nessa porta. Se uma solicitação de conexão for recebida, ela será aceita automaticamente.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal associado ao socket vinculado à porta.</td></tr>
+<tr><td><code>port</code></td><td>Número da porta à qual o socket será vinculado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_sock_conn_wait">
+<h4><code>enum mw_err mw_sock_conn_wait(uint8_t ch, int16_t tout_frames)</code></h4>
+<p>Consulta um socket até que ele esteja pronto para transferir dados. Uso típico: após um <code>mw_tcp_bind()</code> bem-sucedido.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal associado ao socket a monitorar.</td></tr>
+<tr><td><code>tout_frames</code></td><td>Número máximo de frames a esperar pela conexão. Use 0 para espera infinita.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_recv">
+<h4><code>static inline enum lsd_status mw_recv(char *buf, int16_t len, void *ctx, lsd_recv_cb recv_cb)</code></h4>
+<p>Recebe dados — interface assíncrona (delega para <code>lsd_recv()</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>buf</code></td><td>Buffer de recepção.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento do buffer de recepção.</td></tr>
+<tr><td><code>ctx</code></td><td>Ponteiro de contexto passado ao callback de recepção.</td></tr>
+<tr><td><code>recv_cb</code></td><td>Callback executado quando a recepção termina ou falha.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de recepção.</p>
+</article>
+<article class="fn" id="fn-mw_udp_reuse_recv">
+<h4><code>static inline enum lsd_status mw_udp_reuse_recv(struct mw_reuse_payload *data, int16_t len, void *ctx, lsd_recv_cb recv_cb)</code></h4>
+<p>Recebe dados por um socket UDP em modo <em>reuse</em>. O buffer de recepção inclui o endereço remoto além do payload.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Buffer de recepção incluindo o endereço remoto e o payload de dados.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento do buffer de recepção.</td></tr>
+<tr><td><code>ctx</code></td><td>Ponteiro de contexto passado ao callback de recepção.</td></tr>
+<tr><td><code>recv_cb</code></td><td>Callback executado quando a recepção termina ou falha.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de recepção.</p>
+</article>
+<article class="fn" id="fn-mw_udp_reuse_send">
+<h4><code>static inline enum lsd_status mw_udp_reuse_send(uint8_t ch, const struct mw_reuse_payload *data, int16_t len, void *ctx, lsd_send_cb send_cb)</code></h4>
+<p>Envia dados por um socket UDP em modo <em>reuse</em>. O buffer de envio deve incluir o endereço remoto além do payload.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal usado na operação de envio.</td></tr>
+<tr><td><code>data</code></td><td>Buffer de envio incluindo o endereço remoto e o payload de dados.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento do buffer.</td></tr>
+<tr><td><code>ctx</code></td><td>Ponteiro de contexto passado ao callback.</td></tr>
+<tr><td><code>send_cb</code></td><td>Callback executado quando o envio termina ou falha.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de envio.</p>
+</article>
+<article class="fn" id="fn-mw_send">
+<h4><code>static inline enum lsd_status mw_send(uint8_t ch, const char *data, int16_t len, void *ctx, lsd_send_cb send_cb)</code></h4>
+<p>Envia dados por um socket, usando um canal previamente alocado. Interface assíncrona.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal usado para enviar os dados.</td></tr>
+<tr><td><code>data</code></td><td>Buffer a enviar.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento dos dados a enviar.</td></tr>
+<tr><td><code>ctx</code></td><td>Contexto para o callback de envio.</td></tr>
+<tr><td><code>send_cb</code></td><td>Callback executado quando o envio termina ou falha.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de envio. Normalmente retorna <code>LSD_STAT_BUSY</code> e o envio prossegue em segundo plano.</p>
+<p class="note">Chamar esta função com um envio em andamento resulta em falha com <code>LSD_STAT_SEND_ERR_IN_PROGRESS</code>. Para frames muito curtos, o callback pode ser executado antes de a função retornar; nesse caso, ela retorna <code>LSD_STAT_COMPLETE</code>.</p>
+</article>
+<article class="fn" id="fn-mw_recv_sync">
+<h4><code>enum mw_err mw_recv_sync(uint8_t *ch, char *buf, int16_t *buf_len, int16_t tout_frames)</code></h4>
+<p>Recebe dados — interface síncrona.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>[saída] Canal no qual os dados foram recebidos.</td></tr>
+<tr><td><code>buf</code></td><td>[saída] Buffer de recepção.</td></tr>
+<tr><td><code>buf_len</code></td><td>[entrada/saída] Na entrada, comprimento do buffer; na saída, comprimento dos dados recebidos em bytes.</td></tr>
+<tr><td><code>tout_frames</code></td><td>Timeout de recepção em frames. Use <code>TSK_PEND_FOREVER</code> para espera infinita (perigoso!).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de recepção.</p>
+<p class="note">Aviso: não use mais de uma chamada síncrona ao mesmo tempo; espere uma terminar antes de emitir outra.</p>
+</article>
+<article class="fn" id="fn-mw_send_sync">
+<h4><code>enum mw_err mw_send_sync(uint8_t ch, const char *data, uint16_t len, int16_t tout_frames)</code></h4>
+<p>Envia dados por um socket, usando um canal previamente alocado. Interface síncrona.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal usado para enviar os dados.</td></tr>
+<tr><td><code>data</code></td><td>Buffer a enviar.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento dos dados a enviar.</td></tr>
+<tr><td><code>tout_frames</code></td><td>Timeout do envio em frames. Use 0 para espera infinita (perigoso!).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de envio.</p>
+<p class="note">Aviso: não use mais de uma chamada síncrona ao mesmo tempo; espere uma terminar antes de emitir outra.</p>
+</article>
+<article class="fn" id="fn-mw_sys_stat_get">
+<h4><code>union mw_msg_sys_stat *mw_sys_stat_get(void)</code></h4>
+<p>Obtém o status do sistema.</p>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a estrutura de status do sistema em caso de sucesso, ou NULL em caso de erro.</p>
+</article>
+<article class="fn" id="fn-mw_sock_stat_get">
+<h4><code>enum mw_sock_stat mw_sock_stat_get(uint8_t ch)</code></h4>
+<p>Obtém o status de um socket.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Canal associado ao socket consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> dados de status do socket em caso de sucesso, ou -1 em caso de erro.</p>
+</article>
+<article class="fn" id="fn-mw_sntp_cfg_set">
+<h4><code>enum mw_err mw_sntp_cfg_set(const char *tz_str, const char *server[3])</code></h4>
+<p>Configura os parâmetros de SNTP e o fuso horário.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tz_str</code></td><td>String de fuso horário (por exemplo, "CET"). Veja <code>tzset(3)</code> para detalhes.</td></tr>
+<tr><td><code>server</code></td><td>Vetor com até três servidores NTP. Entradas não usadas devem ficar vazias.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Após uma chamada bem-sucedida, chame <code>mw_cfg_save()</code> para persistir as alterações.</p>
+</article>
+<article class="fn" id="fn-mw_sntp_cfg_get">
+<h4><code>enum mw_err mw_sntp_cfg_get(char **tz_str, char *server[3])</code></h4>
+<p>Obtém a configuração de SNTP e de fuso horário.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tz_str</code></td><td>[saída] String de fuso horário (por exemplo, "CET").</td></tr>
+<tr><td><code>server</code></td><td>[saída] Vetor com três ponteiros de servidores NTP. Entradas não configuradas serão NULL.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_date_time_get">
+<h4><code>char *mw_date_time_get(uint32_t dt_bin[2])</code></h4>
+<p>Obtém data e hora.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>dt_bin</code></td><td>[saída] Data e hora em segundos desde a Epoch (64 bits). Se NULL, este campo não é preenchido (mas o valor de retorno continua válido).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> string com a data e hora em formato textual, por exemplo "Thu Mar 3 12:26:51 2016", ou NULL em caso de erro.</p>
+</article>
+<article class="fn" id="fn-mw_flash_id_get">
+<h4><code>enum mw_err mw_flash_id_get(uint8_t *man_id, uint16_t *dev_id)</code></h4>
+<p>Obtém os identificadores do chip de flash do módulo WiFi.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>man_id</code></td><td>[saída] ID do fabricante do chip de flash.</td></tr>
+<tr><td><code>dev_id</code></td><td>[saída] IDs de dispositivo do chip de flash.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_flash_sector_erase">
+<h4><code>enum mw_err mw_flash_sector_erase(uint16_t sect)</code></h4>
+<p>Apaga um setor de 4 KiB da flash. Cada byte de um setor apagado passa a ser lido como 0xFF.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sect</code></td><td>Número do setor a apagar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_flash_write">
+<h4><code>enum mw_err mw_flash_write(uint32_t addr, uint8_t *data, uint16_t data_len)</code></h4>
+<p>Grava dados no endereço especificado da flash.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>addr</code></td><td>Endereço no qual os dados serão gravados.</td></tr>
+<tr><td><code>data</code></td><td>Dados a gravar no chip de flash.</td></tr>
+<tr><td><code>data_len</code></td><td>Comprimento em bytes do campo <code>data</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_flash_read">
+<h4><code>uint8_t *mw_flash_read(uint32_t addr, uint16_t data_len)</code></h4>
+<p>Lê dados do endereço especificado da flash.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>addr</code></td><td>Endereço do qual os dados serão lidos.</td></tr>
+<tr><td><code>data_len</code></td><td>Número de bytes a ler a partir de <code>addr</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para os dados lidos em caso de sucesso, ou NULL se o comando falhou.</p>
+</article>
+<article class="fn" id="fn-mw_gamertag_set">
+<h4><code>enum mw_err mw_gamertag_set(uint8_t slot, const struct mw_gamertag *gamertag)</code></h4>
+<p>Define as informações de gamertag de um slot.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot a usar (de 0 a 2).</td></tr>
+<tr><td><code>gamertag</code></td><td>Informações de gamertag a gravar no slot especificado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Após uma chamada bem-sucedida, chame <code>mw_cfg_save()</code> para persistir as alterações.</p>
+</article>
+<article class="fn" id="fn-mw_gamertag_get">
+<h4><code>struct mw_gamertag *mw_gamertag_get(uint8_t slot)</code></h4>
+<p>Obtém as informações de gamertag de um slot.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot do qual obter o gamertag.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> informações do gamertag em caso de sucesso, NULL em caso de erro.</p>
+</article>
+<article class="fn" id="fn-mw_log">
+<h4><code>enum mw_err mw_log(const char *msg)</code></h4>
+<p>Escreve uma mensagem no log de rastreamento (trace) do módulo WiFi.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>msg</code></td><td>Mensagem a escrever no log.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_factory_settings">
+<h4><code>enum mw_err mw_factory_settings(void)</code></h4>
+<p>Restaura a configuração de fábrica do módulo.</p>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Recomenda-se reiniciar o módulo após este comando.</p>
+</article>
+<article class="fn" id="fn-mw_power_off">
+<h4><code>void mw_power_off(void)</code></h4>
+<p>Desliga o módulo WiFi, colocando-o em modo deep sleep. Para acordá-lo, o pino RESET deve ser alternado.</p>
+</article>
+<article class="fn" id="fn-mw_sleep">
+<h4><code>void mw_sleep(int16_t frames)</code></h4>
+<p>Dorme pelo número de frames especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>frames</code></td><td>Número de frames a dormir.</td></tr></table>
+</article>
+<article class="fn" id="fn-mw_http_url_set">
+<h4><code>enum mw_err mw_http_url_set(const char *url)</code></h4>
+<p>Define a URL para requisições HTTP.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>url</code></td><td>URL a definir.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_http_method_set">
+<h4><code>enum mw_err mw_http_method_set(enum mw_http_method method)</code></h4>
+<p>Define o método das requisições HTTP.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>method</code></td><td>Método a definir.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_http_header_add">
+<h4><code>enum mw_err mw_http_header_add(const char *key, const char *value)</code></h4>
+<p>Adiciona um cabeçalho HTTP.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>key</code></td><td>Chave do cabeçalho.</td></tr>
+<tr><td><code>value</code></td><td>Valor a definir para a chave.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_http_header_del">
+<h4><code>enum mw_err mw_http_header_del(const char *key)</code></h4>
+<p>Remove um cabeçalho HTTP previamente adicionado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>key</code></td><td>Chave do cabeçalho a remover.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_http_open">
+<h4><code>enum mw_err mw_http_open(uint32_t content_len)</code></h4>
+<p>Abre a conexão HTTP, envia os cabeçalhos e prepara o módulo para enviar o conteúdo de <code>content_len</code> bytes (se houver) com um <code>mw_send()</code> ou <code>mw_send_sync()</code> subsequente, usando o canal <code>MW_HTTP_CH</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>content_len</code></td><td>Comprimento do conteúdo a escrever na requisição HTTP após esta chamada.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_http_finish">
+<h4><code>int16_t mw_http_finish(uint32_t *content_len, int16_t tout_frames)</code></h4>
+<p>Finaliza uma requisição HTTP aberta. Após um <code>mw_http_open()</code> bem-sucedido e o envio do conteúdo (se houver), chame esta função para receber os cabeçalhos da resposta HTTP e obter o comprimento do corpo, que deverá ser lido em seguida com <code>mw_recv()</code> ou <code>mw_recv_sync()</code> no canal <code>MW_HTTP_CH</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>content_len</code></td><td>[saída] Comprimento do conteúdo da resposta a receber após esta chamada.</td></tr>
+<tr><td><code>tout_frames</code></td><td>Número máximo de frames a esperar pela resposta.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o código de status HTTP se a requisição foi concluída, ou um código de erro (menor que 100) caso contrário.</p>
+<p class="note">Mesmo com a requisição concluída, códigos 4xx ou 5xx indicam erro do lado do cliente ou do servidor.</p>
+</article>
+<article class="fn" id="fn-mw_http_cert_query">
+<h4><code>uint32_t mw_http_cert_query(void)</code></h4>
+<p>Consulta o hash X.509 do certificado PEM instalado.</p>
+<p class="returns"><strong>Retorna:</strong> 0xFFFFFFFF se não houver certificado instalado ou em caso de erro; caso contrário, o hash do certificado X.509 instalado.</p>
+</article>
+<article class="fn" id="fn-mw_http_cert_set">
+<h4><code>enum mw_err mw_http_cert_set(uint32_t cert_hash, const char *cert, uint16_t cert_len)</code></h4>
+<p>Define o certificado PEM a usar em requisições HTTPS. O certificado é gravado na memória não volátil do módulo e, quando presente, é usado nas requisições HTTPS. Também pode remover um certificado previamente gravado (com entrada NULL/comprimento 0).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>cert_hash</code></td><td>Hash X.509 do certificado a definir; ignorado se <code>cert_len</code> for 0.</td></tr>
+<tr><td><code>cert</code></td><td>Certificado PEM em texto plano; ignorado se <code>cert_len</code> for 0.</td></tr>
+<tr><td><code>cert_len</code></td><td>Comprimento do certificado em bytes. Use 0 para apagar um certificado previamente gravado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_http_cleanup">
+<h4><code>int16_t mw_http_cleanup(void)</code></h4>
+<p>Faz a limpeza de uma requisição HTTP, liberando os recursos associados.</p>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+</article>
+<article class="fn" id="fn-mw_def_server_get">
+<h4><code>char *mw_def_server_get(void)</code></h4>
+<p>Obtém o servidor padrão usado nas conexões MegaWiFi.</p>
+<p class="returns"><strong>Retorna:</strong> a string com a URL do servidor, ou NULL em caso de erro.</p>
+</article>
+<article class="fn" id="fn-mw_def_server_set">
+<h4><code>enum mw_err mw_def_server_set(const char *server_url)</code></h4>
+<p>Define o servidor padrão usado nas conexões MegaWiFi.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>server_url</code></td><td>URL do servidor a definir.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Após uma chamada bem-sucedida, chame <code>mw_cfg_save()</code> para persistir as alterações.</p>
+</article>
+<article class="fn" id="fn-mw_hrng_get">
+<h4><code>uint8_t *mw_hrng_get(uint16_t rnd_len)</code></h4>
+<p>Obtém números aleatórios gerados pelo hardware do módulo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>rnd_len</code></td><td>Número de bytes do vetor aleatório resultante.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o buffer com os números aleatórios solicitados em caso de sucesso, ou NULL em caso de erro.</p>
+</article>
+<article class="fn" id="fn-mw_ga_endpoint_set">
+<h4><code>enum mw_err mw_ga_endpoint_set(const char *endpoint, const char *priv_key)</code></h4>
+<p>Define o endpoint para a Game API. Exemplo de endpoint para GameJolt: "https://api.gamejolt.com/api/game/v1_2/".</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>endpoint</code></td><td>Endpoint da Game API a definir.</td></tr>
+<tr><td><code>priv_key</code></td><td>Chave privada usada nas assinaturas das requisições.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">O endpoint definido persiste entre chamadas sucessivas a <code>mw_ga_request()</code>.</p>
+</article>
+<article class="fn" id="fn-mw_ga_key_value_add">
+<h4><code>enum mw_err mw_ga_key_value_add(const char **key, const char **value, uint16_t num_pairs)</code></h4>
+<p>Adiciona parâmetros à requisição da Game API no formato chave/valor. Exemplo de par para GameJolt: <code>"game_id":"123456"</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>key</code></td><td>Vetor com as chaves a adicionar.</td></tr>
+<tr><td><code>value</code></td><td>Vetor com os valores a adicionar.</td></tr>
+<tr><td><code>num_pairs</code></td><td>Número de pares chave/valor a adicionar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>MW_ERR_NONE</code> em caso de sucesso, outro código em caso de falha.</p>
+<p class="note">Os pares persistem entre chamadas sucessivas a <code>mw_ga_request()</code>. Chame <code>mw_ga_key_value_add(NULL, NULL, 0)</code> para limpar pares previamente definidos. Os pares NÃO devem estar em URL encoding: a codificação é feita internamente.</p>
+</article>
+<article class="fn" id="fn-mw_ga_request">
+<h4><code>int16_t mw_ga_request(enum mw_http_method method, const char **path, uint8_t num_paths, const char **key, const char **value, uint8_t num_kv_pairs, uint32_t *content_len, int16_t tout_frames)</code></h4>
+<p>Executa uma requisição da Game API com o endpoint e os pares chave/valor previamente definidos. A requisição também pode incluir parâmetros adicionais, que são somados aos pares já definidos. Exemplo para GameJolt: método <code>MW_HTTP_METHOD_GET</code>, path "trophies", par <code>"achieved":"true"</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>method</code></td><td>Método HTTP a usar (mais provavelmente <code>MW_HTTP_METHOD_GET</code>).</td></tr>
+<tr><td><code>path</code></td><td>Paths adicionais a acrescentar à requisição.</td></tr>
+<tr><td><code>num_paths</code></td><td>Número de paths adicionais.</td></tr>
+<tr><td><code>key</code></td><td>Chaves adicionais para a requisição.</td></tr>
+<tr><td><code>value</code></td><td>Valores adicionais para a requisição.</td></tr>
+<tr><td><code>num_kv_pairs</code></td><td>Número de pares chave/valor.</td></tr>
+<tr><td><code>content_len</code></td><td>[saída] Comprimento do conteúdo da resposta da API.</td></tr>
+<tr><td><code>tout_frames</code></td><td>Número de frames a esperar antes de cancelar a requisição por timeout.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> código de status HTTP em caso de sucesso (por exemplo, 200), ou um erro (menor que 100) se a requisição não pôde ser completada.</p>
+<p class="note">Códigos 4xx/5xx indicam erro de cliente ou servidor. <code>path</code>, <code>key</code> e <code>value</code> não devem estar em URL encoding: a codificação é feita internamente.</p>
+</article>
+<article class="fn" id="fn-mw_fw_list_upgrades">
+<h4><code>enum mw_err mw_fw_list_upgrades(uint8_t page, uint8_t size, uint8_t offset, char **listUpgrades, uint8_t *len, uint8_t *total)</code></h4>
+<p>Lista os upgrades de firmware disponíveis para o módulo WiFi.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>page</code></td><td>Página da lista.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho de página da lista.</td></tr>
+<tr><td><code>offset</code></td><td>Deslocamento (offset).</td></tr>
+<tr><td><code>listUpgrades</code></td><td>[saída] Ponteiro para a lista de <code>char*</code>.</td></tr>
+<tr><td><code>len</code></td><td>[saída] Comprimento do resultado.</td></tr>
+<tr><td><code>total</code></td><td>[saída] Total de elementos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de envio.</p>
+</article>
+<article class="fn" id="fn-mw_fw_upgrade">
+<h4><code>enum mw_err mw_fw_upgrade(const char *name)</code></h4>
+<p>Faz o upgrade Over-The-Air (OTA) do firmware do módulo WiFi.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>name</code></td><td>Nome do blob de firmware a instalar. Por exemplo, "mw_rtos_std_v1.4.1".</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de envio.</p>
+</article>
+<article class="fn" id="fn-mw_ping">
+<h4><code>struct mw_ping_response *mw_ping(const char* domain, u8 retries)</code></h4>
+<p>Executa uma requisição ICMP (ping) para um domínio.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>domain</code></td><td>Domínio a pingar. Por exemplo, "www.example.com".</td></tr>
+<tr><td><code>retries</code></td><td>Número de tentativas do ping. Por exemplo, 5.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a estrutura <code>mw_ping_response</code> com o resultado.</p>
+</article>
+<article class="fn" id="fn-mw_cmd_send">
+<h4><code>static inline enum lsd_status mw_cmd_send(mw_cmd *cmd, void *ctx, lsd_send_cb send_cb)</code></h4>
+<p>Envia um comando ao módulo WiFi pelo canal de controle (0). Função de baixo nível, normalmente desnecessária.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>cmd</code></td><td>Ponteiro para a estrutura de comando <code>mw_cmd</code> preenchida.</td></tr>
+<tr><td><code>ctx</code></td><td>Contexto para a função de callback.</td></tr>
+<tr><td><code>send_cb</code></td><td>Callback executado ao concluir a operação de envio.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de envio.</p>
+</article>
+<article class="fn" id="fn-mw_cmd_recv">
+<h4><code>static inline enum lsd_status mw_cmd_recv(mw_cmd *rep, void *ctx, lsd_recv_cb recv_cb)</code></h4>
+<p>Tenta obter a resposta a um comando. Função de baixo nível, normalmente desnecessária.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>rep</code></td><td>Buffer para armazenar a resposta do comando.</td></tr>
+<tr><td><code>ctx</code></td><td>Contexto para o callback de recepção.</td></tr>
+<tr><td><code>recv_cb</code></td><td>Callback executado ao concluir a recepção dos dados.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de recepção.</p>
+</article>
+</section>
+<section class="module" id="mod-mw-msg">
+<h2>mw-msg.h <span class="subtitle">Definições das mensagens de comando do MegaWiFi</span></h2>
+<p class="mod-desc">Definições das mensagens de comando trocadas entre o Mega Drive e o módulo ESP8266 do cartucho MegaWiFi: os códigos de comando e as estruturas de dados que compõem as consultas e respostas do protocolo. Normalmente este módulo não é usado diretamente pela aplicação, e sim internamente pelo módulo <code>megawifi</code>. Autores: Jesus Alonso (doragasu) e Juan Antonio (PaCHoN), 2015~2025.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>MW_MSG_MAX_BUFLEN</code></td><td>512</td><td>Comprimento máximo do buffer de mensagem (bytes).</td></tr>
+<tr><td><code>MW_MS_TO_FRAMES(ms)</code></td><td><code>(((ms)*60/500 + 1)/2)</code></td><td>Macro funcional que converte milissegundos em frames (a 60 Hz, com arredondamento).</td></tr>
+<tr><td><code>MW_BUFLEN</code></td><td>1500</td><td>Comprimento do buffer de dados.</td></tr>
+<tr><td><code>MW_CMD_HEADLEN</code></td><td><code>2 * sizeof(uint16_t)</code></td><td>Comprimento do cabeçalho de comando (código + comprimento dos dados).</td></tr>
+<tr><td><code>MW_CMD_MAX_BUFLEN</code></td><td><code>MW_MSG_MAX_BUFLEN - MW_CMD_HEADLEN</code></td><td>Comprimento máximo de dados dentro do buffer de comando.</td></tr>
+<tr><td><code>MW_SSID_MAXLEN</code> / <code>MW_PASS_MAXLEN</code></td><td>32 / 64</td><td>Comprimento máximo do SSID / senha (incluindo <code>'\0'</code>).</td></tr>
+<tr><td><code>MW_GT_NICKNAME_MAX</code> / <code>MW_GT_SECURITY_MAX</code> / <code>MW_GT_TAGLINE_MAX</code></td><td>32</td><td>Comprimentos máximos de nickname, string de segurança e tagline do gamertag.</td></tr>
+<tr><td><code>MW_GT_AVATAR_WIDTH</code> / <code>MW_GT_AVATAR_HEIGHT</code></td><td>32 / 48</td><td>Largura e altura, em pixels, do avatar do gamertag.</td></tr>
+<tr><td><code>MW_GT_TG_TOKEN_MAX</code></td><td>64</td><td>Comprimento máximo do token do Telegram.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-mw_command">
+<h4><code>enum mw_command</code> <em>(e enums de estado)</em></h4>
+<p>Enumerações de controle do protocolo. <code>enum mw_command</code> lista os códigos de comando suportados pelo firmware; os demais enums descrevem segurança, PHY, estado do sistema e dos sockets.</p>
+<pre class="code">// Comandos suportados (valores 0..58 e 255) — enum PACKED mw_command:
+//   MW_CMD_OK(0), VERSION(1), ECHO(2), AP_SCAN(3), AP_CFG(4), AP_CFG_GET(5),
+//   IP_CURRENT(6), IP_CFG(8), IP_CFG_GET(9), DEF_AP_CFG(10), DEF_AP_CFG_GET(11),
+//   AP_JOIN(12), AP_LEAVE(13), TCP_CON(14), TCP_BIND(15), CLOSE(17), UDP_SET(18),
+//   SOCK_STAT(20), PING(21), SNTP_CFG(22), SNTP_CFG_GET(23), DATETIME(24),
+//   DT_SET(25), FLASH_WRITE(26), FLASH_READ(27), FLASH_ERASE(28), FLASH_ID(29),
+//   SYS_STAT(30), DEF_CFG_SET(31), HRNG_GET(32), BSSID_GET(33), GAMERTAG_SET(34),
+//   GAMERTAG_GET(35), LOG(36), FACTORY_RESET(37), SLEEP(38), HTTP_URL_SET(39),
+//   HTTP_METHOD_SET(40), HTTP_CERT_QUERY(41), HTTP_CERT_SET(42), HTTP_HDR_ADD(43),
+//   HTTP_HDR_DEL(44), HTTP_OPEN(45), HTTP_FINISH(46), HTTP_CLEANUP(47),
+//   SERVER_URL_GET(49), SERVER_URL_SET(50), WIFI_ADV_GET(51), WIFI_ADV_SET(52),
+//   NV_CFG_SAVE(53), UPGRADE_LIST(54), UPGRADE_PERFORM(55), GAME_ENDPOINT_SET(56),
+//   GAME_KEYVAL_ADD(57), GAME_REQUEST(58), MW_CMD_ERROR(255)
+
+// enum PACKED mw_security — protocolos de segurança suportados:
+//   MW_SEC_OPEN(0), WEP, WPA_PSK, WPA2_PSK, WPA_WPA2_PSK, WPA2_ENTERPRISE,
+//   WPA3_PSK, WPA2_WPA3_PSK, WAPI_PSK, OWE, UNKNOWN
+
+// enum PACKED mw_phy_type — configuração de PHY WiFi:
+//   MW_PHY_11B(1, legado), MW_PHY_11BG(3), MW_PHY_11BGN(7)
+
+// enum mw_state — estados da máquina de estados do sistema:
+//   MW_ST_INIT(0), IDLE, AP_JOIN, SCAN, READY, TRANSPARENT, MW_ST_MAX
+
+// enum mw_sock_stat — status de socket:
+//   MW_SOCK_NONE(0, livre), TCP_LISTEN, TCP_EST, UDP_READY</pre>
+</article>
+<article class="type" id="type-mw_ip_cfg">
+<h4>Estruturas de endereçamento e configuração — <code>ip_addr</code>, <code>mw_msg_in_addr</code>, <code>mw_ip_cfg</code>, <code>mw_msg_ap_cfg</code>, <code>mw_msg_ip_cfg</code>, <code>mw_msg_sntp_cfg</code>, <code>mw_wifi_adv_cfg</code></h4>
+<p>Estruturas usadas nas mensagens de configuração de rede. <code>mw_wifi_adv_cfg</code> reúne os parâmetros avançados de WiFi (QoS, AMPDU/AMSDU, buffers de RX/TX). Atenção: em <code>mw_msg_ap_cfg</code>, se o SSID tiver 32 bytes ou a senha 64 bytes, as strings NÃO serão terminadas em NULL.</p>
+<pre class="code">union ip_addr {
+    uint32_t addr;    // Endereço IP em forma de 32 bits
+    uint8_t byte[4];  // Endereço IP em forma de 4 bytes
+};
+
+struct mw_msg_in_addr {          // Mensagem de endereço TCP/UDP
+    char dst_port[6];            // Porta de destino (string)
+    char src_port[6];            // Porta de origem (string)
+    uint8_t channel;             // Canal LSD usado na comunicação
+    char dst_addr[];             // Endereço de destino (payload)
+};
+
+struct mw_ip_cfg {               // Parâmetros de configuração IP
+    union ip_addr addr;          // IP do host (binário)
+    union ip_addr mask;          // Máscara de sub-rede
+    union ip_addr gateway;       // Gateway
+    union ip_addr dns1, dns2;    // Servidores DNS 1 e 2
+};
+
+struct mw_msg_ap_cfg {           // Mensagem de configuração de AP
+    uint8_t cfg_num;             // Número da configuração
+    enum mw_phy_type phy_type;   // Bitmask do tipo de PHY
+    char ssid[MW_SSID_MAXLEN];   // SSID
+    char pass[MW_PASS_MAXLEN];   // Senha
+};
+
+struct mw_msg_ip_cfg {           // Mensagem de configuração IP
+    uint8_t cfg_slot;            // Slot de configuração
+    uint8_t reserved[3];         // Reservado (zerar)
+    struct mw_ip_cfg ip;         // Dados de configuração IPv4
+};
+
+struct mw_msg_sntp_cfg {         // Configuração SNTP e fuso horário
+    uint16_t up_delay;           // Intervalo de atualização em s (mín.: 15)
+    int8_t tz;                   // Fuso horário (-11 a 13)
+    uint8_t dst;                 // Horário de verão (1 soma 1 hora)
+    char servers[MW_CMD_MAX_BUFLEN - 4]; // Até 3 URLs NTP separadas por NULL;
+                                         // NULL duplo encerra a lista
+};
+
+struct mw_wifi_adv_cfg {         // Configuração avançada de WiFi
+    uint8_t qos_enable;          // Habilita QoS
+    uint8_t ampdu_rx_enable;     // Habilita AMPDU RX
+    uint8_t rx_ba_win;           // Janela Block Ack RX
+    uint8_t rx_ampdu_buf_num;    // Número de buffers AMPDU RX
+    uint32_t rx_ampdu_buf_len;   // Tamanho do buffer AMPDU RX
+    uint32_t rx_max_single_pkt_len; // Tamanho máximo de pacote RX
+    uint32_t rx_buf_len;         // Tamanho do buffer RX
+    uint8_t amsdu_rx_enable;     // Habilita AMSDU RX
+    uint8_t rx_buf_num;          // Número de buffers RX
+    uint8_t rx_pkt_num;          // Número de pacotes RX
+    uint8_t left_continuous_rx_buf_num; // Buffers RX contínuos restantes
+    uint8_t tx_buf_num;          // Número de buffers TX
+    uint8_t reserved[3];         // Não usado (zerar)
+};</pre>
+</article>
+<article class="type" id="type-mw_gamertag">
+<h4>Estruturas de dados diversas — <code>mw_msg_date_time</code>, <code>mw_msg_flash_data</code>, <code>mw_msg_flash_range</code>, <code>mw_msg_bind</code>, <code>mw_gamertag</code>, <code>mw_gamertag_set_msg</code>, <code>mw_msg_sys_stat</code>, <code>mw_flash_id</code>, <code>mw_ga_request</code>, <code>mw_ping_request</code>, <code>mw_ping_response</code>, <code>mw_upgrade_list_response</code></h4>
+<p>Demais estruturas de mensagem: data/hora, acesso à flash do módulo, bind de porta, gamertag, status do sistema (union com bitfields sensível à ordem de bytes), Game API, ping ICMP e lista de upgrades de firmware.</p>
+<pre class="code">struct mw_msg_date_time {        // Mensagem de data e hora
+    uint32_t dt_bin[2];          // Segundos desde a Epoch (64 bits)
+    char dt_str[...];            // Data/hora em formato textual
+};
+
+struct mw_msg_flash_data {       // Endereço + dados de flash
+    uint32_t addr;               // Endereço na flash
+    uint8_t data[...];           // Dados associados ao endereço
+};
+
+struct mw_msg_flash_range {      // Bloco de flash
+    uint32_t addr;               // Endereço inicial
+    uint16_t len;                // Comprimento do bloco
+};
+
+struct mw_msg_bind {             // Dados da mensagem de bind
+    uint32_t reserved;           // Reservado (zerar)
+    uint16_t port;               // Porta do bind
+    uint8_t channel;             // Canal do socket vinculado à porta
+};
+
+struct mw_gamertag {             // Dados de gamertag
+    int id;                      // Id único do gamertag
+    char nickname[32];           // Apelido do usuário
+    char security[32];           // String de segurança
+    char tagline[32];            // Texto definido pelo usuário
+    char tg_token[64];           // Token do Telegram
+    uint8_t avatar_tiles[32*48/2]; // Tiles da imagem do avatar
+    uint8_t avatar_pal[32];      // Paleta da imagem do avatar
+};
+
+struct mw_gamertag_set_msg {     // Mensagem de gravação de gamertag
+    uint8_t slot;                // Slot (0 a 2)
+    uint8_t reserved[3];         // Reservado (zerar)
+    struct mw_gamertag gamertag; // Gamertag a definir
+};
+
+union mw_msg_sys_stat {          // Status do sistema
+    uint32_t st_flags;           // Acessa todos os flags de uma vez
+    struct {                     // Bitfields (ordem depende do endianness):
+        enum mw_state sys_stat:8; // Estado do sistema
+        uint8_t online:1;        // Conectado à Internet
+        uint8_t cfg_ok:1;        // Configuração OK
+        uint8_t dt_ok:1;         // Data/hora sincronizada ao menos uma vez
+        uint8_t cfg:2;           // Configuração de rede padrão
+        uint16_t reserved:3;     // Reservado
+        uint16_t ch_ev:16;       // Flags de canais com evento pendente
+    };
+};
+
+struct mw_flash_id {             // Identificadores do chip de flash
+    uint16_t device;             // ID do dispositivo
+    uint8_t manufacturer;        // ID do fabricante
+};
+
+struct mw_ga_request {           // Requisição da Game API
+    uint8_t method;              // Método da requisição
+    uint8_t num_paths;           // Número de paths
+    uint8_t num_kv_pairs;        // Número de pares chave/valor
+    char req[];                  // Dados da requisição
+};
+
+struct mw_ping_request {         // Requisição de ping
+    uint8_t retries;             // Número de tentativas
+    char domain[64];             // Domínio alvo
+};
+
+struct mw_ping_response {        // Resposta do ping
+    uint32_t transmitted;        // Pacotes transmitidos
+    uint32_t received;           // Pacotes recebidos
+    uint32_t total_time_ms;      // Tempo total em ms
+};
+
+struct mw_upgrade_list_response { // Resposta da lista de upgrades
+    uint16_t total;              // Total de elementos
+    uint16_t len;                // Comprimento do payload
+    char *payload;               // Dados da lista
+};</pre>
+</article>
+<article class="type" id="type-mw_cmd">
+<h4><code>mw_cmd</code> e <code>struct mw_reuse_payload</code></h4>
+<p><code>mw_cmd</code> é a union que representa um comando enviado à FSM do sistema: cabeçalho (código + comprimento) seguido do payload, interpretável como qualquer uma das estruturas de mensagem acima. <code>mw_reuse_payload</code> é o payload especial com IP e porta remotos, usado por sockets UDP quando o modo <em>reuse</em> foi ativado em <code>mw_udp_set()</code>, permitindo filtrar IPs de origem e responder corretamente a vários peers.</p>
+<pre class="code">typedef union mw_cmd {
+    char packet[MW_CMD_MAX_BUFLEN + 4]; // Dados brutos do pacote
+    struct {
+        uint16_t cmd;         // Código do comando
+        uint16_t data_len;    // Comprimento dos dados
+        union {               // Payload (data_len bytes), interpretado como:
+            uint8_t ch;                       // Número de canal
+            uint8_t  data[...];               // Dados brutos (8 bits)
+            uint16_t w_data[...];             // Dados brutos (16 bits)
+            uint32_t dw_data[...];            // Dados brutos (32 bits)
+            struct mw_msg_in_addr in_addr;    // Endereço Internet
+            struct mw_msg_ap_cfg ap_cfg;      // Configuração de AP
+            struct mw_msg_ip_cfg ip_cfg;      // Configuração IP
+            struct mw_msg_sntp_cfg sntp_cfg;  // Configuração SNTP
+            struct mw_msg_date_time date_time;// Data e hora
+            struct mw_msg_flash_data fl_data; // Dados de flash
+            struct mw_msg_flash_range fl_range;// Faixa de flash
+            struct mw_msg_bind bind;          // Mensagem de bind
+            struct mw_ping_request ping;      // Requisição de ping
+            struct mw_ping_response ping_response; // Resposta de ping
+            struct mw_upgrade_list_response ug_list_response; // Lista de upgrades
+            union mw_msg_sys_stat sys_stat;   // Status do sistema
+            struct mw_gamertag_set_msg gamertag_set; // Gravação de gamertag
+            struct mw_gamertag gamertag_get;  // Leitura de gamertag
+            struct mw_wifi_adv_cfg wifi_adv_cfg; // Config. avançada WiFi
+            struct mw_flash_id flash_id;      // IDs do chip de flash
+            struct mw_ga_request ga_request;  // Requisição da Game API
+            uint16_t fl_sect;                 // Setor de flash
+            uint32_t fl_id;                   // IDs de flash
+            uint16_t rnd_len;                 // Bytes aleatórios a preencher
+        };
+    };
+} mw_cmd;
+
+struct mw_reuse_payload {        // Payload com IP e porta remotos (UDP reuse)
+    uint32_t remote_ip;          // IP do lado remoto
+    uint16_t remote_port;        // Porta do lado remoto
+    char payload[MW_CMD_MAX_BUFLEN - 6]; // Payload de dados
+};</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-MW_MS_TO_FRAMES">
+<h4><code>MW_MS_TO_FRAMES(ms)</code> <em>(macro)</em></h4>
+<p>Macro funcional que converte um intervalo em milissegundos para o número equivalente de frames de vídeo (assumindo 60 frames por segundo), com arredondamento. É a única "função" deste header, que consiste essencialmente em definições de tipos e mensagens.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ms</code></td><td>Tempo em milissegundos a converter.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número de frames correspondente ao tempo informado.</p>
+</article>
+</section>
+<section class="module" id="mod-comm">
+<h2>comm.h <span class="subtitle">Camada de abstração de drivers de comunicação</span></h2>
+<p class="mod-desc">Interface COMM: camada de abstração que unifica os diferentes transportes físicos usados pelo MegaWiFi para conversar com o módulo WiFi — a UART 16C550 do cartucho MegaWiFi, os drivers SSF dos Everdrive PRO e X7 e o driver serial da porta de controle. Cada transporte é descrito por uma estrutura <code>CommDriver</code> com ponteiros de função; o restante da pilha (LSD, megawifi) usa apenas as funções <code>comm_*</code>, independentes do hardware. Autor: Juan Antonio Ruiz (PaCHoN), 2024-2025.</p>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-CommDriver">
+<h4><code>CommDriver</code></h4>
+<p>Estrutura que descreve um driver de comunicação: operações básicas e características do hardware.</p>
+<pre class="code">typedef struct CommDriver {
+    void (*init)(void);        // Inicializa o hardware
+    bool (*is_present)(void);  // Verifica se o hardware está presente
+    u8 (*read_ready)(void);    // Há dados para ler?
+    u8 (*read)(void);          // Lê um byte
+    u8 (*write_ready)(void);   // Pode escrever?
+    void (*write)(u8 data);    // Escreve um byte
+
+    u16 buff_length;           // Tamanho do buffer de recepção
+    u16 fifo_length;           // Tamanho da FIFO de transmissão
+    char* mode;                // Nome/modo do driver
+} CommDriver;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-comm_get_buffer_length">
+<h4><code>u16 comm_get_buffer_length(void)</code></h4>
+<p>Obtém o comprimento atual do buffer de recepção.</p>
+<p class="returns"><strong>Retorna:</strong> número de bytes disponíveis para leitura no buffer de recepção.</p>
+</article>
+<article class="fn" id="fn-comm_get_tx_fifo_length">
+<h4><code>u16 comm_get_tx_fifo_length(void)</code></h4>
+<p>Obtém o comprimento atual da FIFO de transmissão.</p>
+<p class="returns"><strong>Retorna:</strong> número de bytes atualmente na FIFO de transmissão.</p>
+</article>
+<article class="fn" id="fn-comm_init">
+<h4><code>void comm_init(void)</code></h4>
+<p>Inicializa a interface de comunicação COMM. Deve ser chamada antes de qualquer outra função COMM.</p>
+</article>
+<article class="fn" id="fn-comm_write">
+<h4><code>void comm_write(u8 data)</code></h4>
+<p>Escreve um único byte na interface COMM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Byte a transmitir.</td></tr></table>
+</article>
+<article class="fn" id="fn-comm_read_ready">
+<h4><code>bool comm_read_ready(void)</code></h4>
+<p>Verifica se há dados disponíveis para leitura.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se há dados no buffer de recepção, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-comm_write_ready">
+<h4><code>bool comm_write_ready(void)</code></h4>
+<p>Verifica se a interface COMM pode aceitar dados para transmissão.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se o buffer de escrita tem espaço disponível, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-comm_read">
+<h4><code>u8 comm_read(void)</code></h4>
+<p>Lê um único byte da interface COMM.</p>
+<p class="returns"><strong>Retorna:</strong> o byte lido do buffer de recepção.</p>
+<p class="note">Chame <code>comm_read_ready()</code> antes, para garantir que há dados disponíveis.</p>
+</article>
+<article class="fn" id="fn-comm_get_driver">
+<h4><code>const CommDriver* comm_get_driver(void)</code></h4>
+<p>Obtém o driver COMM atualmente ativo.</p>
+<p class="returns"><strong>Retorna:</strong> ponteiro para a estrutura <code>CommDriver</code> em uso (que descreve o modo de comunicação atual).</p>
+</article>
+<article class="fn" id="fn-comm_get_drivers">
+<h4><code>size_t comm_get_drivers(const CommDriver** drivers)</code></h4>
+<p>Obtém a lista de drivers COMM disponíveis.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>drivers</code></td><td>[saída] Recebe o ponteiro para o vetor de estruturas <code>CommDriver</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número de drivers COMM disponíveis.</p>
+</article>
+<article class="fn" id="fn-comm_set_driver">
+<h4><code>void comm_set_driver(const CommDriver* driver)</code></h4>
+<p>Define o driver COMM ativo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>driver</code></td><td>Ponteiro para a estrutura <code>CommDriver</code> a ativar.</td></tr></table>
+</article>
+</section>
+<section class="module" id="mod-gamejolt">
+<h2>gamejolt.h <span class="subtitle">Cliente da Game API do GameJolt</span></h2>
+<p class="mod-desc">Implementação da versão 1.2 da Game API do GameJolt para o MegaWiFi, permitindo que um jogo de Mega Drive use placares (scoreboards), troféus, sessões, data store, amigos e dados de usuários da plataforma GameJolt pela Internet. Para mais informações, consulte a documentação oficial: https://gamejolt.com/game-api/doc. Requer <code>MODULE_MEGAWIFI = 1</code> em <code>config.h</code> (com reconstrução da biblioteca). O módulo usa X Macros para definir os campos das respostas, o que torna a documentação Doxygen de alguns elementos um pouco complicada. Autor: Jesus Alonso (doragasu), 2020.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>GJ_TROPHY_RESPONSE_TABLE(X)</code></td><td>X Macro</td><td>Campos da resposta de busca de troféus: <code>id</code>, <code>title</code>, <code>difficulty</code>, <code>description</code>, <code>image_url</code>, <code>achieved</code>.</td></tr>
+<tr><td><code>GJ_TIME_RESPONSE_TABLE(X)</code></td><td>X Macro</td><td>Campos da resposta de data/hora: <code>timestamp</code>, <code>timezone</code>, <code>day</code>, <code>hour</code>, <code>minute</code>, <code>second</code>.</td></tr>
+<tr><td><code>GJ_SCORE_RESPONSE_TABLE(X)</code></td><td>X Macro</td><td>Campos da resposta de scores: <code>score</code>, <code>sort</code>, <code>extra_data</code>, <code>user</code>, <code>user_id</code>, <code>guest</code>, <code>stored</code>, <code>stored_timestamp</code>.</td></tr>
+<tr><td><code>GJ_SCORE_TABLE_RESPONSE_TABLE(X)</code></td><td>X Macro</td><td>Campos da resposta de tabelas de score: <code>id</code>, <code>name</code>, <code>description</code>, <code>primary</code>.</td></tr>
+<tr><td><code>GJ_SCORE_GETRANK_RESPONSE_TABLE(X)</code></td><td>X Macro</td><td>Campos da resposta de ranking: <code>message</code>, <code>rank</code>.</td></tr>
+<tr><td><code>GJ_USER_RESPONSE_TABLE(X)</code></td><td>X Macro</td><td>Campos da resposta de usuários: <code>id</code>, <code>type</code>, <code>username</code>, <code>avatar_url</code>, <code>signed_up</code>, <code>signed_up_timestamp</code>, <code>last_logged_in</code>, <code>last_logged_in_timestamp</code>, <code>status</code>, <code>developer_name</code>, <code>developer_website</code>, <code>developer_description</code>.</td></tr>
+<tr><td><code>X_AS_STRUCT(field, decoder, type)</code></td><td>X Macro</td><td>Expande uma tabela de resposta como os campos de uma struct.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-gj_error">
+<h4><code>enum gj_error</code></h4>
+<p>Códigos de erro do módulo. Em caso de sucesso o valor é 0. Nos erros, todos os valores são negativos, com exceção do erro de status HTTP: nesse caso, o valor reportado é o próprio código de status HTTP obtido (por exemplo, 500).</p>
+<pre class="code">enum gj_error {
+    GJ_ERR_NONE      =  0, // Sem erro
+    GJ_ERR_PARAM     = -1, // Parâmetro faltando ou inválido
+    GJ_ERR_REQUEST   = -2, // Requisição falhou (rede ou servidor fora?)
+    GJ_ERR_RECEPTION = -3, // Falha ao receber os dados da resposta
+    GJ_ERR_RESPONSE  = -4, // Resposta sem o cabeçalho success:"true"
+    GJ_ERR_PARSE     = -5  // Erro ao interpretar os dados da resposta
+};</pre>
+</article>
+<article class="type" id="type-gj_trophy_difficulty">
+<h4><code>enum gj_trophy_difficulty</code></h4>
+<p>Dificuldade para conquistar o troféu.</p>
+<pre class="code">enum gj_trophy_difficulty {
+    GJ_TROPHY_TYPE_BRONZE = 0, // Troféu de bronze (mais fácil)
+    GJ_TROPHY_TYPE_SILVER,     // Troféu de prata (médio)
+    GJ_TROPHY_TYPE_GOLD,       // Troféu de ouro (difícil)
+    GJ_TROPHY_TYPE_PLATINUM,   // Troféu de platina (mais difícil)
+    GJ_TROPHY_TYPE_UNKNOWN     // Desconhecido, apenas para erros
+};</pre>
+</article>
+<article class="type" id="type-gj_data_store_update_operation">
+<h4><code>enum gj_data_store_update_operation</code></h4>
+<p>Operações suportadas pela função <code>gj_data_store_update()</code>.</p>
+<pre class="code">enum gj_data_store_update_operation {
+    GJ_OP_ADD = 0,  // Soma o valor ao item
+    GJ_OP_SUBTRACT, // Subtrai o valor do item
+    GJ_OP_MULTIPLY, // Multiplica o item pelo valor
+    GJ_OP_DIVIDE,   // Divide o item pelo valor
+    GJ_OP_APPEND,   // Anexa o valor ao final do item
+    GJ_OP_PREPEND,  // Anexa o valor ao início do item
+    GJ_OP_MAX       // Valor máximo do enum, não usar como operação
+};</pre>
+</article>
+<article class="type" id="type-gj_trophy">
+<h4>Structs de resposta — <code>gj_trophy</code>, <code>gj_time</code>, <code>gj_score</code>, <code>gj_score_table</code>, <code>gj_user</code></h4>
+<p>Estruturas geradas via X Macro a partir das tabelas de resposta correspondentes; cada campo listado nas macros vira um membro (a maioria <code>char*</code>).</p>
+<pre class="code">struct gj_trophy {      // Um troféu
+    char *id;                            // Id do troféu
+    char *title;                         // Título
+    enum gj_trophy_difficulty difficulty;// Dificuldade
+    char *description;                   // Descrição
+    char *image_url;                     // URL da imagem
+    char *achieved;                      // Conquistado?
+    bool secret;                         // Se true, o troféu é secreto
+};
+
+struct gj_time {        // Data/hora do servidor
+    char *timestamp, *timezone, *day, *hour, *minute, *second;
+};
+
+struct gj_score {       // Um score
+    char *score, *sort, *extra_data, *user, *user_id,
+         *guest, *stored, *stored_timestamp;
+};
+
+struct gj_score_table { // Uma tabela de scores
+    char *id, *name, *description;
+    bool primary;       // É a tabela principal?
+};
+
+struct gj_user {        // Dados de um usuário
+    char *id, *type, *username, *avatar_url, *signed_up,
+         *signed_up_timestamp, *last_logged_in,
+         *last_logged_in_timestamp, *status, *developer_name,
+         *developer_website, *developer_description;
+};</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-gj_init">
+<h4><code>bool gj_init(const char *endpoint, const char *game_id, const char *private_key, const char *username, const char *user_token, char *reply_buf, uint16_t buf_len, uint16_t tout_frames)</code></h4>
+<p>Inicializa a API do GameJolt: define o endpoint, as credenciais do jogo e as credenciais do usuário. Chame esta função antes de qualquer outra do módulo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>endpoint</code></td><td>Endpoint da Game API. Provavelmente "https://api.gamejolt.com/api/game/v1_2/".</td></tr>
+<tr><td><code>game_id</code></td><td>Identificador do jogo. Por exemplo, "123456".</td></tr>
+<tr><td><code>private_key</code></td><td>Chave privada do jogo. Mantenha-a em segurança!</td></tr>
+<tr><td><code>username</code></td><td>Nome de usuário do jogador.</td></tr>
+<tr><td><code>user_token</code></td><td>Token correspondente ao usuário.</td></tr>
+<tr><td><code>reply_buf</code></td><td>Buffer pré-alocado para recepção de dados.</td></tr>
+<tr><td><code>buf_len</code></td><td>Comprimento de <code>reply_buf</code>.</td></tr>
+<tr><td><code>tout_frames</code></td><td>Número de frames a esperar pelas requisições antes do timeout.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> false em caso de sucesso, true em caso de erro.</p>
+<p class="note">Aviso: o tamanho de <code>reply_buf</code> determina o comprimento máximo das respostas. Se for pequeno, a API não conseguirá receber respostas longas, como listas de troféus ou de usuários.</p>
+</article>
+<article class="fn" id="fn-gj_get_error">
+<h4><code>enum gj_error gj_get_error(void)</code></h4>
+<p>Retorna o último código de erro. Se qualquer outra função do módulo retornar com erro, chame esta função imediatamente depois para obter o código.</p>
+<p class="returns"><strong>Retorna:</strong> o código de erro; 0 (<code>GJ_ERR_NONE</code>) se nenhum erro ocorreu.</p>
+</article>
+<article class="fn" id="fn-gj_trophies_fetch">
+<h4><code>char *gj_trophies_fetch(bool achieved, const char *trophy_id)</code></h4>
+<p>Busca os troféus do jogador.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>achieved</code></td><td>Se true, somente troféus conquistados são obtidos.</td></tr>
+<tr><td><code>trophy_id</code></td><td>Se não for NULL, obtém apenas o troféu com o id especificado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> dados brutos dos troféus em caso de sucesso, NULL em falha. Use <code>gj_trophy_get_next()</code> para decodificar os dados brutos.</p>
+</article>
+<article class="fn" id="fn-gj_trophy_get_next">
+<h4><code>char *gj_trophy_get_next(char *pos, struct gj_trophy *trophy)</code></h4>
+<p>Decodifica a próxima entrada dos dados brutos de troféus. Na primeira chamada, passe em <code>pos</code> o valor retornado por <code>gj_trophies_fetch()</code>; nas seguintes, o último valor não NULL retornado por esta função.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pos</code></td><td>[entrada/saída] Posição do troféu a extrair. Os dados brutos de entrada são modificados para acrescentar terminadores NULL aos campos.</td></tr>
+<tr><td><code>trophy</code></td><td>[saída] Dados decodificados do troféu.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> posição do próximo troféu a decodificar (para a próxima chamada), ou NULL se o troféu atual não pôde ser decodificado.</p>
+</article>
+<article class="fn" id="fn-gj_trophy_add_achieved">
+<h4><code>bool gj_trophy_add_achieved(const char *trophy_id)</code></h4>
+<p>Marca um troféu como conquistado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>trophy_id</code></td><td>Identificador do troféu a marcar como conquistado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> true em caso de erro, false em caso de sucesso.</p>
+</article>
+<article class="fn" id="fn-gj_trophy_remove_achieved">
+<h4><code>bool gj_trophy_remove_achieved(const char *trophy_id)</code></h4>
+<p>Marca um troféu como não conquistado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>trophy_id</code></td><td>Identificador do troféu a marcar como não conquistado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> true em caso de erro, false em caso de sucesso.</p>
+</article>
+<article class="fn" id="fn-gj_trophy_difficulty_str">
+<h4><code>const char *gj_trophy_difficulty_str(enum gj_trophy_difficulty difficulty)</code></h4>
+<p>Obtém a string correspondente a uma dificuldade de troféu.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>difficulty</code></td><td>Valor de dificuldade a traduzir para string.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a string correspondente à dificuldade especificada; se o valor estiver fora de faixa, retorna "Unknown".</p>
+</article>
+<article class="fn" id="fn-gj_time">
+<h4><code>bool gj_time(struct gj_time *time)</code></h4>
+<p>Obtém a data e a hora do servidor.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>time</code></td><td>[saída] Data e hora do servidor.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> true em caso de erro, false em caso de sucesso.</p>
+</article>
+<article class="fn" id="fn-gj_scores_fetch">
+<h4><code>char *gj_scores_fetch(const char *limit, const char *table_id, const char *guest, const char *better_than, const char *worse_than, bool only_user)</code></h4>
+<p>Busca dados de scores.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>limit</code></td><td>Número de scores a retornar (padrão: 10).</td></tr>
+<tr><td><code>table_id</code></td><td>Id da tabela, ou NULL para a tabela principal do jogo.</td></tr>
+<tr><td><code>guest</code></td><td>Defina para obter scores apenas do jogador convidado (guest).</td></tr>
+<tr><td><code>better_than</code></td><td>Obter apenas scores melhores que este valor de ordenação.</td></tr>
+<tr><td><code>worse_than</code></td><td>Obter apenas scores piores que este valor de ordenação.</td></tr>
+<tr><td><code>only_user</code></td><td>true para obter apenas os scores do usuário.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> dados brutos dos scores em caso de sucesso, ou NULL em falha. Use <code>gj_score_get_next()</code> para decodificá-los.</p>
+<p class="note">Todos os parâmetros são opcionais; use NULL nos que não quiser definir.</p>
+</article>
+<article class="fn" id="fn-gj_score_get_next">
+<h4><code>char *gj_score_get_next(char *pos, struct gj_score *score)</code></h4>
+<p>Decodifica a próxima entrada dos dados brutos de scores. Na primeira chamada, passe em <code>pos</code> o valor retornado por <code>gj_scores_fetch()</code>; nas seguintes, o último valor não NULL retornado por esta função.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pos</code></td><td>[entrada/saída] Posição do score a extrair. Os dados brutos são modificados para acrescentar terminadores NULL aos campos.</td></tr>
+<tr><td><code>score</code></td><td>[saída] Dados decodificados do score.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> posição do próximo score a decodificar (para a próxima chamada), ou NULL se o score atual não pôde ser decodificado.</p>
+</article>
+<article class="fn" id="fn-gj_scores_tables_fetch">
+<h4><code>char *gj_scores_tables_fetch(void)</code></h4>
+<p>Busca as tabelas de scores do jogo.</p>
+<p class="returns"><strong>Retorna:</strong> dados brutos das tabelas de scores em caso de sucesso, ou NULL em falha. Use <code>gj_score_table_get_next()</code> para decodificá-los.</p>
+</article>
+<article class="fn" id="fn-gj_score_table_get_next">
+<h4><code>char *gj_score_table_get_next(char *pos, struct gj_score_table *score_table)</code></h4>
+<p>Decodifica a próxima entrada dos dados brutos de tabelas de scores. Na primeira chamada, passe em <code>pos</code> o valor retornado por <code>gj_scores_tables_fetch()</code>; nas seguintes, o último valor não NULL retornado por esta função.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pos</code></td><td>[entrada/saída] Posição da tabela a extrair. Os dados brutos são modificados para acrescentar terminadores NULL aos campos.</td></tr>
+<tr><td><code>score_table</code></td><td>[saída] Dados decodificados da tabela de scores.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> posição da próxima tabela a decodificar (para a próxima chamada), ou NULL se a atual não pôde ser decodificada.</p>
+</article>
+<article class="fn" id="fn-gj_scores_get_rank">
+<h4><code>char *gj_scores_get_rank(const char *sort, const char *table_id)</code></h4>
+<p>Obtém o ranking correspondente a um valor de ordenação.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sort</code></td><td>Valor de ordenação do score para obter a posição no ranking da tabela.</td></tr>
+<tr><td><code>table_id</code></td><td>Id da tabela de scores, ou NULL para a tabela principal.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o ranking correspondente ao parâmetro <code>sort</code>, ou NULL em caso de erro.</p>
+</article>
+<article class="fn" id="fn-gj_scores_add">
+<h4><code>bool gj_scores_add(const char *score, const char *sort, const char *table_id, const char *guest, const char *extra_data)</code></h4>
+<p>Adiciona um score a um placar (scoreboard).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>score</code></td><td>Score em formato textual (por exemplo, "500 torreznos").</td></tr>
+<tr><td><code>sort</code></td><td>Número usado para ordenar o score (por exemplo, "500").</td></tr>
+<tr><td><code>table_id</code></td><td>Id da tabela, ou NULL para a tabela principal do jogo.</td></tr>
+<tr><td><code>guest</code></td><td>Nome do jogador convidado, ou NULL para o jogador usuário.</td></tr>
+<tr><td><code>extra_data</code></td><td>Dados extras a gravar com o score, ou NULL para nenhum.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> true em caso de erro, false em caso de sucesso.</p>
+</article>
+<article class="fn" id="fn-gj_data_store_set">
+<h4><code>bool gj_data_store_set(const char *key, const char *data, bool user_store)</code></h4>
+<p>Define um par chave/valor no data store.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>key</code></td><td>Chave a definir.</td></tr>
+<tr><td><code>data</code></td><td>Valor a definir.</td></tr>
+<tr><td><code>user_store</code></td><td>Se true, grava no armazenamento do usuário; caso contrário, no armazenamento global do jogo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> true em caso de erro, false em caso de sucesso.</p>
+</article>
+<article class="fn" id="fn-gj_data_store_keys_fetch">
+<h4><code>char *gj_data_store_keys_fetch(const char *pattern, bool user_store)</code></h4>
+<p>Busca as chaves do data store.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pattern</code></td><td>Opcional. Se definido, filtra as chaves retornadas pelo padrão.</td></tr>
+<tr><td><code>user_store</code></td><td>Se true, busca no armazenamento do usuário; caso contrário, no armazenamento global do jogo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> chaves em formato bruto em caso de sucesso, ou NULL em falha. Use <code>gj_data_store_key_next()</code> para decodificá-las.</p>
+</article>
+<article class="fn" id="fn-gj_data_store_key_next">
+<h4><code>char *gj_data_store_key_next(char *pos, char **key)</code></h4>
+<p>Decodifica os dados de chave de uma chamada a <code>gj_data_store_keys_fetch()</code>. Na primeira chamada, passe em <code>pos</code> o valor retornado por essa função; nas seguintes, o último valor não NULL retornado por esta função.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pos</code></td><td>[entrada/saída] Posição da chave a extrair. Os dados brutos são modificados para acrescentar terminadores NULL.</td></tr>
+<tr><td><code>key</code></td><td>[saída] Chave decodificada.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> posição da próxima chave a decodificar (para a próxima chamada), ou NULL se a chave atual não pôde ser decodificada.</p>
+</article>
+<article class="fn" id="fn-data_store_fetch">
+<h4><code>char *data_store_fetch(const char *key, bool user_store)</code></h4>
+<p>Recupera dados do data store. (Observe que, ao contrário das demais, esta função não tem o prefixo <code>gj_</code>.)</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>key</code></td><td>Chave usada para recuperar os dados.</td></tr>
+<tr><td><code>user_store</code></td><td>Se true, lê do armazenamento do usuário; caso contrário, do armazenamento global do jogo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> os dados associados à chave solicitada, ou NULL em falha.</p>
+</article>
+<article class="fn" id="fn-gj_data_store_update">
+<h4><code>char *gj_data_store_update(const char *key, enum gj_data_store_update_operation operation, const char *value, bool user_store)</code></h4>
+<p>Atualiza dados no data store aplicando uma operação.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>key</code></td><td>Chave dos dados a atualizar.</td></tr>
+<tr><td><code>operation</code></td><td>Operação a aplicar aos dados (somar, subtrair, multiplicar, dividir, append, prepend).</td></tr>
+<tr><td><code>value</code></td><td>Valor a usar na operação de atualização.</td></tr>
+<tr><td><code>user_store</code></td><td>Se true, atualiza no armazenamento do usuário; caso contrário, no armazenamento global do jogo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> os dados atualizados em caso de sucesso, ou NULL em caso de erro.</p>
+</article>
+<article class="fn" id="fn-gj_data_store_remove">
+<h4><code>bool gj_data_store_remove(const char *key, bool user_store)</code></h4>
+<p>Remove dados do data store.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>key</code></td><td>Chave dos dados a remover.</td></tr>
+<tr><td><code>user_store</code></td><td>Se true, remove do armazenamento do usuário; caso contrário, do armazenamento global do jogo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> false em caso de sucesso, true em caso de erro.</p>
+</article>
+<article class="fn" id="fn-gj_sessions_open">
+<h4><code>bool gj_sessions_open(void)</code></h4>
+<p>Abre uma sessão de jogo para o jogador.</p>
+<p class="returns"><strong>Retorna:</strong> false em caso de sucesso, true em caso de erro.</p>
+</article>
+<article class="fn" id="fn-gj_sessions_ping">
+<h4><code>bool gj_sessions_ping(bool active)</code></h4>
+<p>Faz ping em uma sessão, permitindo marcá-la como ativa ou ociosa.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>active</code></td><td>Se true, a sessão é marcada como ativa; caso contrário, como ociosa (idle).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> false em caso de sucesso, true em caso de erro.</p>
+</article>
+<article class="fn" id="fn-gj_sessions_check">
+<h4><code>bool gj_sessions_check(const char *username, const char *user_token)</code></h4>
+<p>Verifica se uma sessão de usuário está ativa no jogo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>username</code></td><td>(Opcional) nome de usuário para verificar a sessão aberta.</td></tr>
+<tr><td><code>user_token</code></td><td>(Opcional) token do usuário para verificar a sessão aberta.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> true se a sessão está ativa; false se não está ativa ou se ocorreu algum erro.</p>
+<p class="note">Se <code>username</code> ou <code>user_token</code> for NULL, a verificação usa o usuário configurado em <code>gj_init()</code>. Para garantir que a sessão não está ativa e não houve erro, quando esta função retornar false, <code>gj_get_error()</code> deve retornar <code>GJ_ERR_NONE</code>.</p>
+</article>
+<article class="fn" id="fn-gj_sessions_close">
+<h4><code>bool gj_sessions_close(void)</code></h4>
+<p>Fecha uma sessão previamente aberta.</p>
+<p class="returns"><strong>Retorna:</strong> false em caso de sucesso, true em caso de erro.</p>
+</article>
+<article class="fn" id="fn-gj_users_fetch">
+<h4><code>char *gj_users_fetch(const char *username, const char *user_id)</code></h4>
+<p>Obtém dados de usuário.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>username</code></td><td>(Opcional) nome do usuário do qual obter dados.</td></tr>
+<tr><td><code>user_id</code></td><td>(Opcional) id do usuário.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> dados brutos do usuário em caso de sucesso, NULL se ocorreu erro.</p>
+<p class="note">É possível passar vários ids separados por vírgula (','); nesse caso, cuidado para não estourar o buffer de recepção. Somente um dos parâmetros opcionais (<code>username</code>, <code>user_id</code>) deve ser especificado; defina o outro como NULL.</p>
+</article>
+<article class="fn" id="fn-gj_user_get_next">
+<h4><code>char *gj_user_get_next(char *pos, struct gj_user *user)</code></h4>
+<p>Decodifica a próxima entrada dos dados brutos de usuários. Na primeira chamada, passe em <code>pos</code> o valor retornado por <code>gj_users_fetch()</code>; nas seguintes, o último valor não NULL retornado por esta função.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pos</code></td><td>[entrada/saída] Posição do usuário a extrair. Os dados brutos são modificados para acrescentar terminadores NULL aos campos.</td></tr>
+<tr><td><code>user</code></td><td>[saída] Dados decodificados do usuário.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> posição do próximo usuário a decodificar (para a próxima chamada), ou NULL se o usuário atual não pôde ser decodificado.</p>
+</article>
+<article class="fn" id="fn-gj_users_auth">
+<h4><code>bool gj_users_auth(void)</code></h4>
+<p>Verifica as credenciais do usuário.</p>
+<p class="returns"><strong>Retorna:</strong> true se as credenciais estão corretas; false se não conferem ou se ocorreu algum erro.</p>
+<p class="note">Para garantir que as credenciais são inválidas e não houve erro, quando esta função retornar false, <code>gj_get_error()</code> deve retornar <code>GJ_ERR_NONE</code>.</p>
+</article>
+<article class="fn" id="fn-gj_friends_fetch">
+<h4><code>char *gj_friends_fetch(void)</code></h4>
+<p>Obtém a lista de amigos.</p>
+<p class="returns"><strong>Retorna:</strong> dados brutos em caso de sucesso, NULL se ocorreu erro. Use <code>gj_friend_get_next()</code> para decodificar os dados e obter os user_ids dos amigos.</p>
+</article>
+<article class="fn" id="fn-gj_friend_get_next">
+<h4><code>char *gj_friend_get_next(char *pos, char **user_id)</code></h4>
+<p>Decodifica a próxima entrada dos dados brutos de amigos. Na primeira chamada, passe em <code>pos</code> o valor retornado por <code>gj_friends_fetch()</code>; nas seguintes, o último valor não NULL retornado por esta função.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pos</code></td><td>[entrada/saída] Posição do amigo a extrair. Os dados brutos são modificados para acrescentar terminadores NULL aos campos.</td></tr>
+<tr><td><code>user_id</code></td><td>[saída] user_id decodificado do amigo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> posição do próximo amigo a decodificar (para a próxima chamada), ou NULL se o amigo atual não pôde ser decodificado.</p>
+</article>
+<article class="fn" id="fn-gj_request">
+<h4><code>char *gj_request(const char **path, uint8_t num_paths, const char **key, const char **value, uint8_t num_kv_pairs, uint32_t *out_len)</code></h4>
+<p>Requisição genérica à Game API do GameJolt. Normalmente não é necessário usá-la diretamente: prefira as chamadas específicas, que preenchem os parâmetros e decodificam a resposta.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>path</code></td><td>Vetor de paths da requisição.</td></tr>
+<tr><td><code>num_paths</code></td><td>Número de elementos no vetor de paths.</td></tr>
+<tr><td><code>key</code></td><td>Vetor de chaves dos parâmetros chave/valor.</td></tr>
+<tr><td><code>value</code></td><td>Vetor de valores dos parâmetros chave/valor.</td></tr>
+<tr><td><code>num_kv_pairs</code></td><td>Número de elementos nos vetores de chaves e valores.</td></tr>
+<tr><td><code>out_len</code></td><td>[saída] Comprimento da resposta recebida.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> os dados brutos da resposta à requisição, ou NULL em caso de erro.</p>
+</article>
+</section>
+<section class="module" id="mod-json">
+<h2>json.h <span class="subtitle">Auxiliares de navegação em JSON</span></h2>
+<p class="mod-desc">Implementação de JSON baseada no jsmn de Serge Zaitsev. Este módulo apenas adiciona funções auxiliares ao jsmn para facilitar a navegação pela estrutura JSON e a extração de valores — útil, por exemplo, para interpretar as respostas JSON da Game API (GameJolt) recebidas pelo MegaWiFi. Define <code>JSMN_STATIC</code> antes de incluir <code>jsmn.h</code>, para esconder a API do jsmn e evitar erros de link. Autor: Jesus Alonso (doragasu), 2019.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>JSMN_STATIC</code></td><td>definido</td><td>Torna estáticas as definições da API do jsmn, evitando erros de link.</td></tr>
+</table>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-json_item">
+<h4><code>json_item(json_str, obj_tok, idx)</code> <em>(macro)</em></h4>
+<p>Extrai o item (como string) de um token. Requer que <code>json_str</code> já tenha os terminadores NULL adicionados por <code>json_null_terminate()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>json_str</code></td><td>String JSON com terminadores NULL aplicados.</td></tr>
+<tr><td><code>obj_tok</code></td><td>Vetor de tokens extraído da string.</td></tr>
+<tr><td><code>idx</code></td><td>Índice do token desejado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o início do valor do token na string, ou NULL se <code>idx</code> for negativo.</p>
+</article>
+<article class="fn" id="fn-json_null_terminate">
+<h4><code>int json_null_terminate(char *json_str, const jsmntok_t *obj_tok, int num_tok)</code></h4>
+<p>Acrescenta terminadores NULL à string JSON de entrada. Útil para depois extrair os valores dos tokens como strings terminadas em NULL.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>json_str</code></td><td>[entrada/saída] String JSON à qual adicionar os terminadores NULL.</td></tr>
+<tr><td><code>obj_tok</code></td><td>Tokens extraídos de <code>json_str</code>.</td></tr>
+<tr><td><code>num_tok</code></td><td>Número de tokens em <code>obj_tok</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso, <code>JSMN_ERROR_INVAL</code> se a string terminar prematuramente.</p>
+<p class="note">Aviso: a string resultante deixa de ser um JSON válido.</p>
+</article>
+<article class="fn" id="fn-json_is_key">
+<h4><code>bool json_is_key(const jsmntok_t *json_tok, int obj_idx, int num_tok)</code></h4>
+<p>Determina se o token apontado corresponde a uma chave em um par chave:valor.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>json_tok</code></td><td>Vetor de tokens JSON.</td></tr>
+<tr><td><code>obj_idx</code></td><td>Índice do token a analisar.</td></tr>
+<tr><td><code>num_tok</code></td><td>Número de tokens em <code>json_tok</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> true se o token é uma chave; false caso contrário.</p>
+</article>
+<article class="fn" id="fn-json_object_next">
+<h4><code>int json_object_next(const jsmntok_t *obj_tok, int obj_idx, int parent_idx, int num_tok)</code></h4>
+<p>Retorna o índice do próximo item. Só funciona corretamente quando o token especificado é do tipo <code>JSMN_OBJECT</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>obj_tok</code></td><td>Vetor de tokens JSON.</td></tr>
+<tr><td><code>obj_idx</code></td><td>Índice do token a analisar.</td></tr>
+<tr><td><code>parent_idx</code></td><td>Índice do token do objeto ou array pai.</td></tr>
+<tr><td><code>num_tok</code></td><td>Número de tokens em <code>obj_tok</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o índice do próximo item em caso de sucesso, ou <code>JSMN_ERROR_PART</code> se não houver mais itens no objeto pai.</p>
+</article>
+<article class="fn" id="fn-json_key_next">
+<h4><code>int json_key_next(const jsmntok_t *json_tok, int obj_idx, int parent_idx, int num_tok)</code></h4>
+<p>Retorna o índice da próxima chave no nível JSON atual.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>json_tok</code></td><td>Vetor de tokens JSON.</td></tr>
+<tr><td><code>obj_idx</code></td><td>Índice do token a analisar.</td></tr>
+<tr><td><code>parent_idx</code></td><td>Índice do token do objeto ou array pai.</td></tr>
+<tr><td><code>num_tok</code></td><td>Número de tokens em <code>json_tok</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o índice da próxima chave em caso de sucesso, ou <code>JSMN_ERROR_PART</code> se não houver mais chaves no objeto pai.</p>
+</article>
+<article class="fn" id="fn-json_key_search">
+<h4><code>int json_key_search(const char *key, const char *json_str, const jsmntok_t *json_tok, int obj_idx, int parent_idx, int num_tok)</code></h4>
+<p>Procura uma chave no nível JSON atual.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>key</code></td><td>String da chave a procurar.</td></tr>
+<tr><td><code>json_str</code></td><td>String JSON.</td></tr>
+<tr><td><code>json_tok</code></td><td>Vetor de tokens JSON.</td></tr>
+<tr><td><code>obj_idx</code></td><td>Índice do token a analisar.</td></tr>
+<tr><td><code>parent_idx</code></td><td>Índice do token do objeto ou array pai.</td></tr>
+<tr><td><code>num_tok</code></td><td>Número de tokens em <code>json_tok</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o índice do token do <em>valor</em> em caso de sucesso, ou <code>JSMN_ERROR_PART</code> se a chave não foi encontrada no objeto pai.</p>
+<p class="note">O valor retornado em caso de sucesso é o índice do token do valor, e NÃO o índice do token da chave encontrada.</p>
+</article>
+<article class="fn" id="fn-json_bool_get">
+<h4><code>int json_bool_get(const char *json_str, const jsmntok_t *json_tok, int obj_idx)</code></h4>
+<p>Obtém o valor booleano correspondente ao token indicado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>json_str</code></td><td>String JSON.</td></tr>
+<tr><td><code>json_tok</code></td><td>Vetor de tokens JSON extraído de <code>json_str</code>.</td></tr>
+<tr><td><code>obj_idx</code></td><td>Índice do token a analisar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 1 se true, 0 se false, valor negativo se o token não for um booleano válido.</p>
+</article>
+</section>
+<section class="module" id="mod-jsmn">
+<h2>jsmn.h <span class="subtitle">Parser JSON minimalista (jsmn)</span></h2>
+<p class="mod-desc">O jsmn, de Serge Zaitsev (licença MIT), é um parser de JSON minimalista, sem alocação dinâmica: ele apenas tokeniza a string JSON em um vetor de tokens (<code>jsmntok_t</code>) fornecido pelo chamador, cada token descrevendo um objeto, array, string ou primitivo com suas posições de início e fim. É a base do módulo <code>json.h</code> do SGDK, usado para interpretar respostas JSON recebidas via MegaWiFi. Este header é do tipo header-only: além da API pública (<code>jsmn_init</code>/<code>jsmn_parse</code>), contém a implementação com funções estáticas internas. Comportamentos opcionais são controlados por <code>JSMN_STATIC</code> (API estática), <code>JSMN_HEADER</code> (somente declarações), <code>JSMN_PARENT_LINKS</code> (campo <code>parent</code> nos tokens) e <code>JSMN_STRICT</code> (análise estrita).</p>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-jsmntype_t">
+<h4><code>jsmntype_t</code> e <code>enum jsmnerr</code></h4>
+<p>Identificador do tipo de token JSON e códigos de erro do parser.</p>
+<pre class="code">typedef enum {
+    JSMN_UNDEFINED = 0, // Indefinido
+    JSMN_OBJECT = 1,    // Objeto
+    JSMN_ARRAY = 2,     // Array
+    JSMN_STRING = 3,    // String
+    JSMN_PRIMITIVE = 4  // Primitivo: número, booleano ou null
+} jsmntype_t;
+
+enum jsmnerr {
+    JSMN_ERROR_NOMEM = -1, // Tokens fornecidos insuficientes
+    JSMN_ERROR_INVAL = -2, // Caractere inválido na string JSON
+    JSMN_ERROR_PART  = -3  // JSON incompleto, mais bytes esperados
+};</pre>
+</article>
+<article class="type" id="type-jsmntok_t">
+<h4><code>jsmntok_t</code></h4>
+<p>Descrição de um token JSON: tipo, posições de início e fim na string de dados e número de filhos.</p>
+<pre class="code">typedef struct {
+    jsmntype_t type; // Tipo (objeto, array, string etc.)
+    int start;       // Posição inicial na string JSON
+    int end;         // Posição final na string JSON
+    int size;        // Número de elementos filhos
+#ifdef JSMN_PARENT_LINKS
+    int parent;      // Índice do token pai
+#endif
+} jsmntok_t;</pre>
+</article>
+<article class="type" id="type-jsmn_parser">
+<h4><code>jsmn_parser</code></h4>
+<p>Parser JSON. Contém a posição atual na string sendo analisada e o controle de alocação de tokens.</p>
+<pre class="code">typedef struct {
+    unsigned int pos;     // Offset na string JSON
+    unsigned int toknext; // Próximo token a alocar
+    int toksuper;         // Token superior (objeto ou array pai)
+} jsmn_parser;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-jsmn_init">
+<h4><code>JSMN_API void jsmn_init(jsmn_parser *parser)</code></h4>
+<p>Cria (inicializa) um parser JSON para operar sobre um vetor de tokens: zera a posição e o contador de tokens e limpa o token superior.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>parser</code></td><td>Parser a inicializar.</td></tr></table>
+</article>
+<article class="fn" id="fn-jsmn_parse">
+<h4><code>JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len, jsmntok_t *tokens, const unsigned int num_tokens)</code></h4>
+<p>Executa o parser JSON: analisa a string de dados JSON e preenche um vetor de tokens, cada um descrevendo um único objeto JSON. Se <code>tokens</code> for NULL, apenas conta os tokens necessários.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>parser</code></td><td>Parser previamente inicializado com <code>jsmn_init()</code>.</td></tr>
+<tr><td><code>js</code></td><td>String JSON a analisar.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento da string.</td></tr>
+<tr><td><code>tokens</code></td><td>Vetor de tokens a preencher (ou NULL para apenas contar).</td></tr>
+<tr><td><code>num_tokens</code></td><td>Capacidade do vetor de tokens.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número de tokens analisados em caso de sucesso, ou um código negativo de <code>enum jsmnerr</code> (<code>JSMN_ERROR_NOMEM</code>, <code>JSMN_ERROR_INVAL</code> ou <code>JSMN_ERROR_PART</code>) em caso de falha.</p>
+</article>
+<article class="fn" id="fn-jsmn_alloc_token">
+<h4><code>static jsmntok_t *jsmn_alloc_token(jsmn_parser *parser, jsmntok_t *tokens, const size_t num_tokens)</code></h4>
+<p>Função interna da implementação: aloca um token novo, ainda não usado, do pool de tokens.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>parser</code></td><td>Parser em uso.</td></tr>
+<tr><td><code>tokens</code></td><td>Pool (vetor) de tokens.</td></tr>
+<tr><td><code>num_tokens</code></td><td>Capacidade do pool.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o token alocado, ou NULL se o pool está esgotado.</p>
+<p class="note">Interna: existe apenas quando a implementação é compilada no header (sem <code>JSMN_HEADER</code>); não faz parte da API pública.</p>
+</article>
+<article class="fn" id="fn-jsmn_fill_token">
+<h4><code>static void jsmn_fill_token(jsmntok_t *token, const jsmntype_t type, const int start, const int end)</code></h4>
+<p>Função interna da implementação: preenche o tipo e os limites (início/fim) de um token, zerando seu tamanho.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>token</code></td><td>Token a preencher.</td></tr>
+<tr><td><code>type</code></td><td>Tipo do token.</td></tr>
+<tr><td><code>start</code></td><td>Posição inicial na string JSON.</td></tr>
+<tr><td><code>end</code></td><td>Posição final na string JSON.</td></tr></table>
+<p class="note">Interna: não faz parte da API pública.</p>
+</article>
+<article class="fn" id="fn-jsmn_parse_primitive">
+<h4><code>static int jsmn_parse_primitive(jsmn_parser *parser, const char *js, const size_t len, jsmntok_t *tokens, const size_t num_tokens)</code></h4>
+<p>Função interna da implementação: preenche o próximo token disponível com um primitivo JSON (número, booleano ou null).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>parser</code></td><td>Parser em uso.</td></tr>
+<tr><td><code>js</code></td><td>String JSON.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento da string.</td></tr>
+<tr><td><code>tokens</code></td><td>Vetor de tokens (ou NULL para apenas contar).</td></tr>
+<tr><td><code>num_tokens</code></td><td>Capacidade do vetor.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso, ou <code>JSMN_ERROR_INVAL</code>/<code>JSMN_ERROR_NOMEM</code>/<code>JSMN_ERROR_PART</code> em falha.</p>
+<p class="note">Interna: não faz parte da API pública.</p>
+</article>
+<article class="fn" id="fn-jsmn_parse_string">
+<h4><code>static int jsmn_parse_string(jsmn_parser *parser, const char *js, const size_t len, jsmntok_t *tokens, const size_t num_tokens)</code></h4>
+<p>Função interna da implementação: preenche o próximo token com uma string JSON, validando sequências de escape (incluindo <code>\uXXXX</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>parser</code></td><td>Parser em uso.</td></tr>
+<tr><td><code>js</code></td><td>String JSON.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento da string.</td></tr>
+<tr><td><code>tokens</code></td><td>Vetor de tokens (ou NULL para apenas contar).</td></tr>
+<tr><td><code>num_tokens</code></td><td>Capacidade do vetor.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso, ou <code>JSMN_ERROR_INVAL</code>/<code>JSMN_ERROR_NOMEM</code>/<code>JSMN_ERROR_PART</code> em falha.</p>
+<p class="note">Interna: não faz parte da API pública.</p>
+</article>
+</section>
+<section class="module" id="mod-lsd">
+<h2>lsd.h <span class="subtitle">Protocolo de enlace LSD (Local Symmetric Data-link)</span></h2>
+<p class="mod-desc">Local Symmetric Data-link: protocolo extremamente simples para ligar dois dispositivos full-duplex, multiplexando o enlace de dados em até <code>LSD_MAX_CH</code> canais simultâneos sobre o link serial — é a camada de enlace usada entre o Mega Drive e o módulo WiFi do MegaWiFi. O módulo tem funções síncronas para enviar/receber (fáceis de usar, mas que fazem polling e travam o console até o fim da transferência) e as equivalentes assíncronas, que retornam imediatamente mas exigem chamadas frequentes a <code>lsd_process()</code>; ao concluírem, executam o callback informado. O formato de frame é <code>STX : CH-LENH : LENL : DATA : ETX</code> (STX/ETX delimitam o frame; CH-LENH traz o canal nos 4 bits altos e os 4 bits altos do comprimento; LENL traz os 8 bits baixos do comprimento). Como o Mega Drive não tem pino de interrupção nem de DMA no slot de cartucho, polling é o único caminho. Aviso: a API síncrona é bem menos confiável — <code>lsd_recv_sync()</code> pode congelar a máquina se nenhum frame for recebido. Autores: Jesus Alonso (doragasu) e Juan Antonio (PaCHoN), 2019~2025.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>LSD_OVERHEAD</code></td><td>4</td><td>Overhead do frame LSD em bytes.</td></tr>
+<tr><td><code>LSD_MAX_CH</code></td><td>4</td><td>Número máximo de canais simultâneos disponíveis.</td></tr>
+<tr><td><code>LSD_MAX_LEN</code></td><td>4095</td><td>Comprimento máximo do payload de dados.</td></tr>
+<tr><td><code>LSD_BUF_FRAMES</code></td><td>2</td><td>Número de frames de buffer disponíveis.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-lsd_status">
+<h4><code>enum lsd_status</code></h4>
+<p>Códigos de status retornados pelas funções LSD.</p>
+<pre class="code">enum lsd_status {
+    LSD_STAT_ERR_FRAMING = -5,       // Erro de formato de frame
+    LSD_STAT_ERR_INVALID_CH = -4,    // Canal inválido
+    LSD_STAT_ERR_FRAME_TOO_LONG = -3,// Frame longo demais
+    LSD_STAT_ERR_IN_PROGRESS = -2,   // Operação em andamento
+    LSD_STAT_ERROR = -1,             // Erro genérico
+    LSD_STAT_COMPLETE = 0,           // Sem erro (concluído)
+    LSD_STAT_BUSY = 1                // Executando a operação pedida
+};</pre>
+</article>
+<article class="type" id="type-lsd_send_cb">
+<h4><code>lsd_send_cb</code> e <code>lsd_recv_cb</code></h4>
+<p>Tipos de callback das funções assíncronas <code>lsd_send()</code> e <code>lsd_recv()</code>.</p>
+<pre class="code">// Callback do envio assíncrono
+typedef void (*lsd_send_cb)(enum lsd_status stat, void *ctx);
+
+// Callback da recepção assíncrona
+typedef void (*lsd_recv_cb)(enum lsd_status stat, uint8_t ch,
+        char *data, uint16_t len, void *ctx);</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-lsd_init">
+<h4><code>void lsd_init(void)</code></h4>
+<p>Inicialização do módulo LSD.</p>
+</article>
+<article class="fn" id="fn-lsd_ch_enable">
+<h4><code>int lsd_ch_enable(uint8_t ch)</code></h4>
+<p>Habilita um canal para iniciar a recepção e poder enviar dados.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Número do canal.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>LSD_OK</code> em caso de sucesso, <code>LSD_ERROR</code> caso contrário.</p>
+</article>
+<article class="fn" id="fn-lsd_ch_disable">
+<h4><code>int lsd_ch_disable(uint8_t ch)</code></h4>
+<p>Desabilita um canal, interrompendo a recepção e proibindo o envio de dados.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Número do canal.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>LSD_OK</code> em caso de sucesso, <code>LSD_ERROR</code> caso contrário.</p>
+</article>
+<article class="fn" id="fn-lsd_send">
+<h4><code>enum lsd_status lsd_send(uint8_t ch, const char *data, int16_t len, void *ctx, lsd_send_cb send_cb)</code></h4>
+<p>Envia dados de forma assíncrona por um canal previamente habilitado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Número do canal a usar.</td></tr>
+<tr><td><code>data</code></td><td>Buffer a enviar.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento do buffer a enviar.</td></tr>
+<tr><td><code>ctx</code></td><td>Contexto para a função de callback de envio.</td></tr>
+<tr><td><code>send_cb</code></td><td>Callback executado quando o envio termina ou falha.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de envio. Normalmente retorna <code>LSD_STAT_BUSY</code> e o envio prossegue em segundo plano.</p>
+<p class="note">Chamar esta função com um envio em andamento resulta em falha com <code>LSD_STAT_SEND_ERR_IN_PROGRESS</code>.</p>
+</article>
+<article class="fn" id="fn-lsd_send_sync">
+<h4><code>enum lsd_status lsd_send_sync(uint8_t ch, const char *data, int16_t len)</code></h4>
+<p>Envia dados de forma síncrona por um canal previamente habilitado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>ch</code></td><td>Número do canal a usar.</td></tr>
+<tr><td><code>data</code></td><td>Buffer a enviar.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento do buffer a enviar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de envio.</p>
+<p class="note">Aviso: esta função faz polling até a conclusão (ou erro) do procedimento.</p>
+</article>
+<article class="fn" id="fn-lsd_recv">
+<h4><code>enum lsd_status lsd_recv(char *buf, int16_t len, void *ctx, lsd_recv_cb recv_cb)</code></h4>
+<p>Recebe um frame de forma assíncrona usando o protocolo LSD.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>buf</code></td><td>Buffer para a recepção.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento do buffer.</td></tr>
+<tr><td><code>ctx</code></td><td>Contexto para a função de callback de recepção.</td></tr>
+<tr><td><code>recv_cb</code></td><td>Callback executado quando a recepção termina ou falha.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de recepção.</p>
+</article>
+<article class="fn" id="fn-lsd_recv_sync">
+<h4><code>enum lsd_status lsd_recv_sync(char *buf, uint16_t *len, uint8_t *ch)</code></h4>
+<p>Recebe um frame de forma síncrona usando o protocolo LSD.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>buf</code></td><td>[saída] Buffer para os dados recebidos.</td></tr>
+<tr><td><code>len</code></td><td>[entrada/saída] Na entrada: comprimento do buffer. Na saída: comprimento do frame recebido.</td></tr>
+<tr><td><code>ch</code></td><td>[saída] Canal no qual os dados foram recebidos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> status do procedimento de recepção.</p>
+<p class="note">Aviso: esta função faz polling até a recepção terminar ou ocorrer um erro. Se nenhum frame for recebido no momento da chamada, a máquina irá travar. USE COM CUIDADO!</p>
+</article>
+<article class="fn" id="fn-lsd_process">
+<h4><code>void lsd_process(void)</code></h4>
+<p>Processa envios/recepções de dados pendentes. Chame esta função com a maior frequência possível quando usar as funções assíncronas <code>lsd_send()</code> e <code>lsd_recv()</code>.</p>
+</article>
+</section>
+<section class="module" id="mod-16c550">
+<h2>16c550.h <span class="subtitle">Driver da UART 16C550 do cartucho MegaWiFi</span></h2>
+<p class="mod-desc">Driver simples para o chip UART 16C550 presente no cartucho MegaWiFi, mapeado no espaço de endereços do cartucho (base 0xA130C1). É por esta UART que o Mega Drive conversa com o ESP8266 do cartucho. Com cristal de 24 MHz, o baud rate máximo alcançável é 24000000/16 = 1,5 Mbps. Os registradores IER, FCR, LCR e MCR são write-only no chip, por isso o driver mantém cópias sombra (shadow) na estrutura <code>UartShadow</code>; nunca os acesse diretamente — use as macros <code>uart_set</code>/<code>uart_get</code>/<code>uart_set_bits</code>/<code>uart_clr_bits</code>. Autor: Jesus Alonso (doragasu), 2016.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>UART_BASE</code></td><td>0xA130C1</td><td>Endereço base da UART 16C550.</td></tr>
+<tr><td><code>UART_CLK</code></td><td>24000000</td><td>Clock aplicado ao chip (cristal de 24 MHz).</td></tr>
+<tr><td><code>UART_BR</code></td><td>1500000</td><td>Baud rate desejado (máximo com cristal de 24 MHz).</td></tr>
+<tr><td><code>UART_TX_FIFO_LEN</code></td><td>16</td><td>Comprimento da FIFO de TX em bytes.</td></tr>
+<tr><td><code>UART_BUFLEN</code></td><td>1460</td><td>Comprimento do buffer da UART.</td></tr>
+<tr><td><code>DivWithRounding(dividend, divisor)</code></td><td>macro</td><td>Divisão com arredondamento de um bit, útil para calcular divisores.</td></tr>
+<tr><td><code>UART_DLM_VAL</code> / <code>UART_DLL_VAL</code></td><td>calculados</td><td>Valores a carregar no divisor da UART (byte alto/baixo), derivados de <code>UART_CLK</code> e <code>UART_BR</code>.</td></tr>
+<tr><td><code>UART_RHR</code> / <code>UART_THR</code></td><td><code>UART_BASE + 0</code></td><td>Registrador de recepção (somente leitura) / transmissão (somente escrita).</td></tr>
+<tr><td><code>UART_IER</code>, <code>UART_FCR</code>, <code>UART_LCR</code>, <code>UART_MCR</code></td><td>base +2, +4, +6, +8</td><td>Registradores de controle (somente escrita — use as macros Set/Get).</td></tr>
+<tr><td><code>UART_ISR</code>, <code>UART_LSR</code>, <code>UART_MSR</code></td><td>base +4, +10, +12</td><td>Registradores de status (somente leitura).</td></tr>
+<tr><td><code>UART_SPR</code></td><td>base +14</td><td>Registrador scratchpad.</td></tr>
+<tr><td><code>UART_DLL</code> / <code>UART_DLM</code></td><td>base +0 / +2</td><td>Latch do divisor (LSB/MSB); acessível apenas com LCR[7] = 1.</td></tr>
+<tr><td><code>UART_MCR__DTR</code>, <code>UART_MCR__RTS</code>, <code>UART_MCR__OUT1</code>, <code>UART_MCR__OUT2</code></td><td>0x01, 0x02, 0x04, 0x08</td><td>Pinos de saída controlados pelo registrador MCR (DTR, RTS, GPIO 1 e 2).</td></tr>
+<tr><td><code>UART_MSR__DSR</code></td><td>0x20</td><td>Pino de entrada Data Set Ready, lido no registrador MSR.</td></tr>
+<tr><td><code>MW__RESET</code> / <code>MW__PRG</code> / <code>MW__DCD</code></td><td>DTR / RTS / DSR</td><td>Pinos usados para controlar o módulo WiFi: reset, programação e requisição de dados (entrada).</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-UartShadow">
+<h4><code>UartShadow</code></h4>
+<p>Estrutura com os registradores sombra (shadow) dos registradores write-only da UART. A variável global <code>extern UartShadow sh</code> guarda as cópias — não a acesse diretamente!</p>
+<pre class="code">typedef struct {
+    uint8_t IER; // Interrupt Enable Register
+    uint8_t FCR; // FIFO Control Register
+    uint8_t LCR; // Line Control Register
+    uint8_t MCR; // Modem Control Register
+} UartShadow;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-uart_init">
+<h4><code>void uart_init(void)</code></h4>
+<p>Inicializa o driver: o baud rate é configurado para <code>UART_BR</code> e as FIFOs da UART são habilitadas. Deve ser chamada antes de qualquer outra chamada da API.</p>
+</article>
+<article class="fn" id="fn-uart_is_present">
+<h4><code>bool uart_is_present(void)</code></h4>
+<p>Verifica se a UART está presente.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se a UART foi detectada, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-uart_tx_ready">
+<h4><code>bool uart_tx_ready()</code></h4>
+<p>Verifica se o registrador/FIFO de transmissão da UART está pronto. Em modo FIFO, até 16 caracteres podem ser carregados de cada vez quando o transmissor está pronto.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se o transmissor está pronto, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-uart_rx_ready">
+<h4><code>bool uart_rx_ready()</code></h4>
+<p>Verifica se o registrador/FIFO de recepção da UART tem dados disponíveis.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se pelo menos 1 byte está disponível, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-uart_putc">
+<h4><code>void uart_putc(u8 c)</code></h4>
+<p>Envia um caractere pela UART.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>c</code></td><td>Caractere a enviar.</td></tr></table>
+<p class="note">Garanta que há espaço no registrador/FIFO de transmissão chamando <code>uart_tx_ready()</code> antes de usar esta função.</p>
+</article>
+<article class="fn" id="fn-uart_getc">
+<h4><code>u8 uart_getc()</code></h4>
+<p>Retorna um caractere recebido pela UART.</p>
+<p class="returns"><strong>Retorna:</strong> o caractere recebido.</p>
+<p class="note">Garanta que há dados disponíveis chamando <code>uart_rx_ready()</code> antes de usar esta função.</p>
+</article>
+<article class="fn" id="fn-uart_set">
+<h4><code>uart_set(reg, val)</code> <em>(macro)</em></h4>
+<p>Define um valor no registrador IER, FCR, LCR ou MCR, atualizando também sua cópia sombra.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>reg</code></td><td>Registrador a modificar (IER, FCR, LCR ou MCR).</td></tr>
+<tr><td><code>val</code></td><td>Valor a gravar no registrador.</td></tr></table>
+</article>
+<article class="fn" id="fn-uart_get">
+<h4><code>uart_get(reg)</code> <em>(macro)</em></h4>
+<p>Obtém o valor do registrador IER, FCR, LCR ou MCR a partir da cópia sombra.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>reg</code></td><td>Registrador a ler (IER, FCR, LCR ou MCR).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor do registrador solicitado.</p>
+</article>
+<article class="fn" id="fn-uart_set_bits">
+<h4><code>uart_set_bits(reg, val)</code> <em>(macro)</em></h4>
+<p>Liga (seta) bits no registrador IER, FCR, LCR ou MCR, via cópia sombra.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>reg</code></td><td>Registrador a modificar (IER, FCR, LCR ou MCR).</td></tr>
+<tr><td><code>val</code></td><td>Os bits ligados em <code>val</code> serão ligados no registrador.</td></tr></table>
+</article>
+<article class="fn" id="fn-uart_clr_bits">
+<h4><code>uart_clr_bits(reg, val)</code> <em>(macro)</em></h4>
+<p>Desliga (limpa) bits no registrador IER, FCR, LCR ou MCR, via cópia sombra.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>reg</code></td><td>Registrador a modificar (IER, FCR, LCR ou MCR).</td></tr>
+<tr><td><code>val</code></td><td>Os bits ligados em <code>val</code> serão desligados no registrador.</td></tr></table>
+</article>
+<article class="fn" id="fn-uart_reset_fifos">
+<h4><code>void uart_reset_fifos()</code></h4>
+<p>Reinicializa (reseta) as FIFOs de TX e RX.</p>
+</article>
+<article class="fn" id="fn-uart_test">
+<h4><code>uart_test(reg, val)</code> <em>(macro)</em></h4>
+<p>Testa a conexão com os registradores: grava <code>val</code> em <code>reg</code> (a verificação de leitura correspondente está comentada no código).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>reg</code></td><td>Registrador a modificar.</td></tr>
+<tr><td><code>val</code></td><td>Bits a gravar/ler no registrador.</td></tr></table>
+</article>
+<article class="fn" id="fn-uart_reset">
+<h4><code>void uart_reset(void)</code></h4>
+<p>Reseta a UART. (Sem documentação adicional no header.)</p>
+</article>
+<article class="fn" id="fn-uart_start">
+<h4><code>void uart_start(void)</code></h4>
+<p>Inicia a UART. (Sem documentação adicional no header.)</p>
+</article>
+<article class="fn" id="fn-uart_line_sync">
+<h4><code>void uart_line_sync(void)</code></h4>
+<p>Envia um frame de sincronização: um bloco de bytes 0x55 para ajudar a camada física a sincronizar. Normalmente não é necessário, mas pode ajudar alguns chips UART a calcular um clock preciso.</p>
+</article>
+</section>
+<section class="module" id="mod-ssf-ed-pro">
+<h2>ssf_ed_pro.h <span class="subtitle">Driver SSF para Everdrive PRO</span></h2>
+<p class="mod-desc">Driver SSF simples para o flashcart Everdrive PRO (Mega ED PRO), permitindo usar a FIFO USB/serial do cartucho como transporte de comunicação (por exemplo, para a pilha MegaWiFi via camada COMM). Os registradores da FIFO ficam mapeados no espaço do cartucho a partir de 0xA130D0. Documentação de referência: https://github.com/krikzz/mega-ed-pub. Autor: Juan Antonio Ruiz (PaCHoN), 2024-2025.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>REG_FIFO_DATA</code></td><td><code>*(volatile u16*)0xA130D0</code></td><td>Registrador de dados da FIFO.</td></tr>
+<tr><td><code>REG_FIFO_STAT</code></td><td><code>*(volatile u16*)0xA130D2</code></td><td>Registrador de status da FIFO.</td></tr>
+<tr><td><code>REG_SYS_STAT</code></td><td><code>*(volatile u16*)0xA130D4</code></td><td>Registrador de status do sistema.</td></tr>
+<tr><td><code>FIFO_CPU_RXF</code></td><td>0x8000</td><td>Flag da FIFO: a CPU do sistema pode ler.</td></tr>
+<tr><td><code>FIFO_RXF_MSK</code></td><td>0x7FF</td><td>Máscara do contador de recepção da FIFO.</td></tr>
+<tr><td><code>STAT_PRO_PRESENT</code></td><td>0x55A0</td><td>Valor de status que indica a presença do Everdrive PRO.</td></tr>
+<tr><td><code>CMD_USB_WR</code></td><td>0x22</td><td>Comando de escrita USB.</td></tr>
+<tr><td><code>MW_EDPRO_BUFLEN</code></td><td>1436</td><td>Tamanho do buffer usado pelo MegaWiFi neste transporte.</td></tr>
+<tr><td><code>MW_EDPRO_TXFIFO_LEN</code></td><td>512</td><td>Tamanho da FIFO de transmissão.</td></tr>
+</table>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-ssf_ed_pro_is_present">
+<h4><code>bool ssf_ed_pro_is_present(void)</code></h4>
+<p>Verifica se o Everdrive PRO está presente (comparando o status do sistema com <code>STAT_PRO_PRESENT</code>).</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se o hardware foi detectado, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-ssf_ed_pro_write">
+<h4><code>void ssf_ed_pro_write(u8 data)</code></h4>
+<p>Escreve um byte na FIFO do Everdrive PRO.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Byte a transmitir.</td></tr></table>
+</article>
+<article class="fn" id="fn-ssf_ed_pro_read_ready">
+<h4><code>bool ssf_ed_pro_read_ready(void)</code></h4>
+<p>Verifica se há dados disponíveis para leitura na FIFO.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se há dados para ler, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-ssf_ed_pro_write_ready">
+<h4><code>bool ssf_ed_pro_write_ready(void)</code></h4>
+<p>Verifica se a FIFO pode aceitar dados para transmissão.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se é possível escrever, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-ssf_ed_pro_read">
+<h4><code>u8 ssf_ed_pro_read(void)</code></h4>
+<p>Lê um byte da FIFO do Everdrive PRO.</p>
+<p class="returns"><strong>Retorna:</strong> o byte lido.</p>
+<p class="note">Chame <code>ssf_ed_pro_read_ready()</code> antes, para garantir que há dados disponíveis.</p>
+</article>
+<article class="fn" id="fn-ssf_ed_pro_init">
+<h4><code>void ssf_ed_pro_init(void)</code></h4>
+<p>Inicializa o driver no Everdrive PRO.</p>
+</article>
+</section>
+<section class="module" id="mod-ssf-ed-x7">
+<h2>ssf_ed_x7.h <span class="subtitle">Driver SSF para Everdrive X7</span></h2>
+<p class="mod-desc">Driver SSF simples para o flashcart Everdrive X7, expondo a FIFO USB do cartucho como transporte de comunicação (usável pela camada COMM/MegaWiFi). O registrador de dados USB fica em 0xA130E2 (bits D de dados, leitura/escrita) e o de status de IO em 0xA130E4 (somente leitura), com os bits: S = controlador SPI pronto (não usado com WiFi), W = FIFO USB pronta para escrita, R = FIFO USB pronta para leitura, C = tipo de cartão SD (0=SD, 1=SDHC; não usado com WiFi). Autor: Juan Antonio Ruiz (PaCHoN), 2024-2025.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>X7_UART_BASE</code></td><td>0xA13000</td><td>Endereço base da UART SSF.</td></tr>
+<tr><td><code>X7_UART_DATA</code></td><td><code>*(volatile u16*)(base + 226)</code></td><td>Registrador de dados USB (0xA130E2).</td></tr>
+<tr><td><code>X7_UART_STE</code></td><td><code>*(volatile u16*)(base + 228)</code></td><td>Registrador de status de IO (0xA130E4).</td></tr>
+<tr><td><code>X7_UART_REG_CFG</code></td><td><code>*(volatile u16*)(base + 230)</code></td><td>Registrador de configuração.</td></tr>
+<tr><td><code>X7_UART_REG_SSF_CTRL</code></td><td><code>*(volatile u16*)(base + 240)</code></td><td>Registrador de controle SSF.</td></tr>
+<tr><td><code>SSF_CTRL_P</code></td><td>0x8000</td><td>Bit de proteção de acesso a registradores; deve estar setado, senão o registrador ignora escritas.</td></tr>
+<tr><td><code>SSF_CTRL_X</code></td><td>0x4000</td><td>Modo 32x.</td></tr>
+<tr><td><code>SSF_CTRL_W</code></td><td>0x2000</td><td>Proteção de escrita da memória ROM.</td></tr>
+<tr><td><code>SSF_CTRL_L</code></td><td>0x1000</td><td>LED.</td></tr>
+<tr><td><code>X7_UART_SPR</code></td><td><code>X7_UART_DATA</code></td><td>Alias do registrador de dados.</td></tr>
+<tr><td><code>X7_UART_STE_WR_RDY</code> / <code>X7_UART_STE_RD_RDY</code></td><td>2 / 4</td><td>Bits "USB pronto para escrita" / "USB pronto para leitura".</td></tr>
+<tr><td><code>CFG_SPI_SS</code> / <code>CFG_SPI_QWR</code> / <code>CFG_SPI_QRD</code></td><td>1 / 2 / 6</td><td>Sinais SPI: chip select, escrita rápida e leitura rápida.</td></tr>
+<tr><td><code>MW_EDX7_BUFLEN</code></td><td>1436</td><td>Tamanho do buffer usado pelo MegaWiFi neste transporte.</td></tr>
+<tr><td><code>MW_EDX7_TXFIFO_LEN</code></td><td>1</td><td>Tamanho da FIFO de transmissão.</td></tr>
+</table>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-ssf_ed_x7_is_present">
+<h4><code>bool ssf_ed_x7_is_present(void)</code></h4>
+<p>Verifica se o Everdrive X7 está presente.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se o hardware foi detectado, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-ssf_ed_x7_write">
+<h4><code>void ssf_ed_x7_write(u8 data)</code></h4>
+<p>Escreve um byte na FIFO USB do Everdrive X7.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Byte a transmitir.</td></tr></table>
+</article>
+<article class="fn" id="fn-ssf_ed_x7_read_ready">
+<h4><code>bool ssf_ed_x7_read_ready(void)</code></h4>
+<p>Verifica se há dados disponíveis para leitura na FIFO USB (bit R do registrador de status).</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se há dados para ler, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-ssf_ed_x7_write_ready">
+<h4><code>bool ssf_ed_x7_write_ready(void)</code></h4>
+<p>Verifica se a FIFO USB pode aceitar dados para transmissão (bit W do registrador de status).</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se é possível escrever, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-ssf_ed_x7_read">
+<h4><code>u8 ssf_ed_x7_read(void)</code></h4>
+<p>Lê um byte da FIFO USB do Everdrive X7.</p>
+<p class="returns"><strong>Retorna:</strong> o byte lido.</p>
+<p class="note">Chame <code>ssf_ed_x7_read_ready()</code> antes, para garantir que há dados disponíveis.</p>
+</article>
+<article class="fn" id="fn-ssf_ed_x7_init">
+<h4><code>void ssf_ed_x7_init(void)</code></h4>
+<p>Inicializa o driver no Everdrive X7.</p>
+</article>
+</section>
+<section class="module" id="mod-serial">
+<h2>serial.h <span class="subtitle">Driver serial pela porta de controle</span></h2>
+<p class="mod-desc">Driver serial simples para comunicação pela porta de joystick (game port) do Mega Drive, usando o modo serial do controlador de I/O do console — outra opção de transporte para a camada COMM, sem hardware de cartucho. No modo serial, o pino 6 (TL) vira Tx e o pino 9 (TR) vira Rx, com alimentação de +5 V no pino 5 e GND no pino 8; o header documenta a pinagem completa da porta, o conector DB9 fêmea e o mapeamento para um cabo FTDI USB TTL (VCC vermelho no pino 5, TXD laranja no pino 9/Rx, RXD amarelo no pino 6/Tx, GND preto no pino 8). Suporta a porta de controle 2 ou a porta de expansão (EXT), com baud rates de 300 a 4800 bps controlados pelo registrador SCTRL. Autor: Juan Antonio Ruiz (PaCHoN), 2024-2025.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>PORT2_CTRL</code> / <code>PORT2_SCTRL</code> / <code>PORT2_TX</code> / <code>PORT2_RX</code></td><td>0xA1000B / 0xA10019 / 0xA10015 / 0xA10017</td><td>Registradores de controle, controle serial, transmissão e recepção da porta 2.</td></tr>
+<tr><td><code>EXT_CTRL</code> / <code>EXT_SCTRL</code> / <code>EXT_TX</code> / <code>EXT_RX</code></td><td>0xA1000D / 0xA1001F / 0xA1001B / 0xA1001D</td><td>Registradores equivalentes da porta de expansão (EXT).</td></tr>
+<tr><td><code>SCTRL_SIN</code> / <code>SCTRL_SOUT</code></td><td>0x20 / 0x10</td><td>Habilitam a entrada serial (Rx) e a saída serial (Tx) no SCTRL.</td></tr>
+<tr><td><code>SCTRL_300_BPS</code> / <code>SCTRL_1200_BPS</code> / <code>SCTRL_2400_BPS</code> / <code>SCTRL_4800_BPS</code></td><td>0xC0 / 0x80 / 0x40 / 0x00</td><td>Seleção de baud rate no SCTRL.</td></tr>
+<tr><td><code>SCTRL_TFUL</code> / <code>SCTRL_RRDY</code> / <code>SCTRL_RERR</code> / <code>SCTRL_RINT</code></td><td>0x1 / 0x2 / 0x4 / 0x8</td><td>Flags de status: buffer de TX cheio, dado recebido pronto, erro de recepção e habilitação de interrupção de recepção.</td></tr>
+<tr><td><code>CTRL_PCS_OUT</code></td><td>0x7F</td><td>Configuração do registrador de controle da porta.</td></tr>
+<tr><td><code>VDP_MODE_REG_3</code> / <code>VDP_IE2</code></td><td>0xB / 0x08</td><td>Registrador de modo 3 do VDP e bit de habilitação da interrupção externa (IE2).</td></tr>
+<tr><td><code>INT_MASK_LEVEL_ENABLE_ALL</code></td><td>1</td><td>Nível de máscara de interrupção que habilita todas.</td></tr>
+<tr><td><code>SERIAL_BUFLEN</code> / <code>SERIAL_TXFIFO_LEN</code></td><td>1 / 1</td><td>Tamanho do buffer e da FIFO de TX deste transporte.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-IoPort">
+<h4><code>IoPort</code></h4>
+<p>Porta de I/O usada na comunicação serial.</p>
+<pre class="code">typedef enum IoPort {
+    IoPort_Ext,  // Porta de expansão (EXT)
+    IoPort_Ctrl2 // Porta de controle 2
+} IoPort;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-serial_is_present">
+<h4><code>bool serial_is_present(void)</code></h4>
+<p>Verifica se o link serial está presente/disponível.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se presente, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-serial_write">
+<h4><code>void serial_write(u8 data)</code></h4>
+<p>Escreve um byte na porta serial.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Byte a transmitir.</td></tr></table>
+</article>
+<article class="fn" id="fn-serial_read_ready">
+<h4><code>bool serial_read_ready(void)</code></h4>
+<p>Verifica se há dados recebidos disponíveis para leitura.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se há dados para ler, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-serial_write_ready">
+<h4><code>bool serial_write_ready(void)</code></h4>
+<p>Verifica se a porta serial pode aceitar um novo byte para transmissão.</p>
+<p class="returns"><strong>Retorna:</strong> TRUE se é possível escrever, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-serial_read">
+<h4><code>u8 serial_read(void)</code></h4>
+<p>Lê um byte da porta serial.</p>
+<p class="returns"><strong>Retorna:</strong> o byte lido.</p>
+<p class="note">Chame <code>serial_read_ready()</code> antes, para garantir que há dados disponíveis.</p>
+</article>
+<article class="fn" id="fn-serial_init">
+<h4><code>void serial_init(void)</code></h4>
+<p>Inicializa o driver serial (configura a porta e o modo serial).</p>
+</article>
+<article class="fn" id="fn-serial_reset_fifos">
+<h4><code>void serial_reset_fifos(void)</code></h4>
+<p>Reinicializa (reseta) os buffers/FIFOs de transmissão e recepção do driver serial.</p>
+</article>
+<article class="fn" id="fn-serial_baud_rate">
+<h4><code>u16 serial_baud_rate(void)</code></h4>
+<p>Obtém o baud rate atual da porta serial.</p>
+<p class="returns"><strong>Retorna:</strong> o baud rate em uso.</p>
+</article>
+<article class="fn" id="fn-serial_get_sctrl">
+<h4><code>u8 serial_get_sctrl(void)</code></h4>
+<p>Lê o valor do registrador de controle serial (SCTRL) da porta em uso.</p>
+<p class="returns"><strong>Retorna:</strong> o valor atual do SCTRL.</p>
+</article>
+<article class="fn" id="fn-serial_set_sctrl">
+<h4><code>void serial_set_sctrl(u8 value)</code></h4>
+<p>Escreve um valor no registrador de controle serial (SCTRL) da porta em uso.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor a gravar no SCTRL (combinação de flags <code>SCTRL_*</code>).</td></tr></table>
+</article>
+<article class="fn" id="fn-serial_set_mode">
+<h4><code>u16 serial_set_mode(u16 value)</code></h4>
+<p>Define o modo serial (assíncrono ou síncrono).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Modo a definir: use o tamanho do buffer para o modo assíncrono, ou 0 para o modo síncrono.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> número de bytes disponíveis para leitura no buffer de recepção.</p>
+</article>
+<article class="fn" id="fn-serial_set_port">
+<h4><code>void serial_set_port(IoPort port)</code></h4>
+<p>Define a porta de I/O usada na comunicação serial (EXT ou porta de controle 2).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>port</code></td><td>Porta de I/O a usar.</td></tr></table>
+<p class="note">O comentário Doxygen original deste protótipo está trocado (fala em "obter o comprimento do buffer"); a função, na verdade, seleciona a porta.</p>
+</article>
+<article class="fn" id="fn-serial_get_port">
+<h4><code>IoPort serial_get_port(void)</code></h4>
+<p>Obtém a porta de I/O atualmente usada na comunicação serial.</p>
+<p class="returns"><strong>Retorna:</strong> a porta de I/O em uso.</p>
+</article>
+</section>
+<section class="module" id="mod-buffer">
+<h2>buffer.h <span class="subtitle">Buffer circular do driver serial</span></h2>
+<p class="mod-desc">Pequeno buffer de recepção (FIFO circular de bytes) usado pelo driver serial da porta de controle para acumular os dados que chegam — por exemplo, os recebidos via interrupção — até serem consumidos pela aplicação. O header não traz comentários Doxygen; a semântica abaixo decorre das assinaturas e do uso pelo módulo <code>serial</code>.</p>
+<h3>Funções</h3>
+<article class="fn" id="fn-buffer_init">
+<h4><code>u16 buffer_init(u16 size)</code></h4>
+<p>Inicializa o buffer com o tamanho solicitado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>size</code></td><td>Tamanho desejado do buffer, em bytes.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o tamanho efetivamente alocado para o buffer.</p>
+</article>
+<article class="fn" id="fn-buffer_read">
+<h4><code>u8 buffer_read(void)</code></h4>
+<p>Lê (consome) o próximo byte do buffer.</p>
+<p class="returns"><strong>Retorna:</strong> o byte lido.</p>
+<p class="note">Verifique antes com <code>buffer_canRead()</code> se há dados disponíveis.</p>
+</article>
+<article class="fn" id="fn-buffer_write">
+<h4><code>void buffer_write(u8 data)</code></h4>
+<p>Escreve um byte no buffer.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Byte a armazenar.</td></tr></table>
+</article>
+<article class="fn" id="fn-buffer_canRead">
+<h4><code>u8 buffer_canRead(void)</code></h4>
+<p>Indica se há dados disponíveis para leitura no buffer.</p>
+<p class="returns"><strong>Retorna:</strong> valor não nulo se há bytes a ler, 0 caso contrário.</p>
+</article>
+<article class="fn" id="fn-buffer_available">
+<h4><code>u16 buffer_available(void)</code></h4>
+<p>Informa a quantidade de bytes disponíveis no buffer.</p>
+<p class="returns"><strong>Retorna:</strong> número de bytes disponíveis.</p>
+</article>
+<article class="fn" id="fn-buffer_free">
+<h4><code>void buffer_free(void)</code></h4>
+<p>Libera os recursos do buffer.</p>
+</article>
+</section>

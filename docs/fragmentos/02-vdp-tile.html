@@ -1,0 +1,1326 @@
+<section class="module" id="mod-vdp-tile">
+<h2>vdp_tile.h <span class="subtitle">Operações gerais de tile e tilemap no VDP</span></h2>
+<p class="mod-desc">Este módulo fornece as rotinas de baixo nível para manipular tiles e tilemaps no VDP (Video Display Processor) do Mega Drive: envio de dados de tile (patterns de 8x8 pixels, 4bpp) para a VRAM, conversão "on the fly" de bitmaps 4bpp em tiles, e limpeza/preenchimento/escrita de dados de tilemap nos planes de fundo (BG_A, BG_B e WINDOW). No hardware, cada entrada de tilemap é uma word de 16 bits que combina o índice do tile (11 bits) com atributos de prioridade, paleta e flip horizontal/vertical — as macros <code>TILE_ATTR()</code> e <code>TILE_ATTR_FULL()</code> codificam esse formato. Use este módulo sempre que precisar carregar gráficos de fundo, montar telas estáticas, atualizar linhas/colunas de tilemap para scrolling contínuo ou simular um frame buffer. A maioria das funções aceita um parâmetro <code>TransferMethod</code> (CPU, DMA, DMA_QUEUE ou DMA_QUEUE_COPY) que define como os dados chegam à VRAM.</p>
+
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>TILE_ATTR_PRIORITY_SFT</code></td><td><code>15</code></td><td>Deslocamento de bits do atributo de prioridade do tile na entrada de tilemap.</td></tr>
+<tr><td><code>TILE_ATTR_PALETTE_SFT</code></td><td><code>13</code></td><td>Deslocamento de bits do atributo de paleta (2 bits, PAL0..PAL3) na entrada de tilemap.</td></tr>
+<tr><td><code>TILE_ATTR_VFLIP_SFT</code></td><td><code>12</code></td><td>Deslocamento de bits do atributo de flip vertical na entrada de tilemap.</td></tr>
+<tr><td><code>TILE_ATTR_HFLIP_SFT</code></td><td><code>11</code></td><td>Deslocamento de bits do atributo de flip horizontal na entrada de tilemap.</td></tr>
+<tr><td><code>TILE_ATTR_PRIORITY_MASK</code></td><td><code>1 &lt;&lt; 15</code></td><td>Máscara do bit de prioridade do tile.</td></tr>
+<tr><td><code>TILE_ATTR_PALETTE_MASK</code></td><td><code>3 &lt;&lt; 13</code></td><td>Máscara dos bits de paleta do tile.</td></tr>
+<tr><td><code>TILE_ATTR_VFLIP_MASK</code></td><td><code>1 &lt;&lt; 12</code></td><td>Máscara do bit de flip vertical do tile.</td></tr>
+<tr><td><code>TILE_ATTR_HFLIP_MASK</code></td><td><code>1 &lt;&lt; 11</code></td><td>Máscara do bit de flip horizontal do tile.</td></tr>
+<tr><td><code>TILE_ATTR_MASK</code></td><td>combinação das anteriores</td><td>Máscara de todos os atributos (prioridade, paleta e flips) — os bits restantes formam o índice do tile.</td></tr>
+</table>
+</div>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-TileSet">
+<h4><code>TileSet</code></h4>
+<p>Estrutura que contém a definição de um conjunto de tiles (patterns). Se o campo de compressão indicar dados comprimidos, use <code>unpackTileSet()</code> para descomprimir, ou deixe que as funções de carga descompactem "on the fly".</p>
+<pre class="code">typedef struct
+{
+    u16 compression;  // tipo de compressão: COMPRESSION_NONE, COMPRESSION_APLIB ou COMPRESSION_LZ4W
+    u16 numTile;      // número de tiles no buffer 'tiles'
+    u32 *tiles;       // dados dos tiles (comprimidos ou não, conforme 'compression')
+} TileSet;</pre>
+</article>
+<article class="type" id="type-TileMap">
+<h4><code>TileMap</code></h4>
+<p>Estrutura que contém a definição de um tilemap de fundo (matriz de entradas de 16 bits com índice + atributos de tile). Se comprimido, use <code>unpackTileMap()</code> ou deixe as funções de carga descompactarem quando necessário.</p>
+<pre class="code">typedef struct
+{
+    u16 compression;  // tipo de compressão: COMPRESSION_NONE, COMPRESSION_APLIB ou COMPRESSION_LZ4W
+    u16 w;            // largura do tilemap (em tiles)
+    u16 h;            // altura do tilemap (em tiles)
+    u16 *tilemap;     // dados do tilemap
+} TileMap;</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-TILE_ATTR">
+<h4><code>TILE_ATTR(pal, prio, flipV, flipH)</code></h4>
+<p>Macro com comportamento de função que codifica os atributos de tile (sem o índice) para dados de tilemap, no formato de 16 bits usado pelo hardware do VDP.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pal</code></td><td>Índice da paleta (0 a 3 — PAL0..PAL3).</td></tr>
+<tr><td><code>prio</code></td><td>Prioridade do tile (0 = baixa, 1 = alta; tiles de alta prioridade são desenhados sobre sprites de baixa prioridade).</td></tr>
+<tr><td><code>flipV</code></td><td>Flip vertical (0 ou 1).</td></tr>
+<tr><td><code>flipH</code></td><td>Flip horizontal (0 ou 1).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor de 16 bits com os atributos combinados, pronto para ser somado a um índice de tile.</p>
+</article>
+
+<article class="fn" id="fn-TILE_ATTR_FULL">
+<h4><code>TILE_ATTR_FULL(pal, prio, flipV, flipH, index)</code></h4>
+<p>Macro com comportamento de função que codifica os atributos de tile <em>e</em> o índice do tile em uma única word de tilemap.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pal</code></td><td>Índice da paleta (0 a 3).</td></tr>
+<tr><td><code>prio</code></td><td>Prioridade do tile (0 ou 1).</td></tr>
+<tr><td><code>flipV</code></td><td>Flip vertical (0 ou 1).</td></tr>
+<tr><td><code>flipH</code></td><td>Flip horizontal (0 ou 1).</td></tr>
+<tr><td><code>index</code></td><td>Índice do tile na VRAM (0 a 2047).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> entrada de tilemap completa (16 bits) pronta para escrita no plane.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getPlaneAddress">
+<h4><code>u16 VDP_getPlaneAddress(VDPPlane plane, u16 x, u16 y)</code></h4>
+<p>Devolve o endereço em VRAM da entrada de tilemap correspondente à posição informada dentro do plane.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane consultado: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> endereço em VRAM do tilemap para a posição dada.</p>
+</article>
+
+<article class="fn" id="fn-VDP_loadTileData">
+<h4><code>void VDP_loadTileData(const u32 *data, u16 index, u16 num, TransferMethod tm)</code></h4>
+<p>Carrega dados de tile (patterns de 8x8 pixels, 32 bytes por tile) na VRAM a partir do índice indicado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados de tile (já no formato nativo do VDP).</td></tr>
+<tr><td><code>index</code></td><td>Índice de tile onde iniciar a carga (use <code>TILE_USER_INDEX</code> como base para tiles do usuário).</td></tr>
+<tr><td><code>num</code></td><td>Número de tiles a carregar.</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note">Taxa de transferência aproximada: ~90 bytes por scanline via software e ~190 bytes por scanline via DMA (durante o blanking).</p>
+</article>
+
+<article class="fn" id="fn-VDP_loadTileSet">
+<h4><code>bool VDP_loadTileSet(const TileSet *tileset, u16 index, TransferMethod tm)</code></h4>
+<p>Carrega um <code>TileSet</code> completo na VRAM. Se o TileSet estiver comprimido, é descompactado "on the fly" (requer memória temporária).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tileset</code></td><td>Ponteiro para a estrutura <code>TileSet</code>.</td></tr>
+<tr><td><code>index</code></td><td>Índice de tile onde iniciar a carga (base: <code>TILE_USER_INDEX</code>).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se não houver memória suficiente para descompactar o TileSet (apenas quando há compressão).</p>
+<p class="note">Usar <code>DMA_QUEUE</code> com recurso comprimido é inseguro: o buffer descompactado é liberado e pode ser sobrescrito antes de o DMA executar. Nesse caso use <code>DMA_QUEUE_COPY</code> ou descompacte o recurso antes.</p>
+</article>
+
+<article class="fn" id="fn-VDP_loadTileSetEx">
+<h4><code>bool VDP_loadTileSetEx(const TileSet *tileset, u16 index, u16 fromTile, u16 count, TransferMethod tm)</code></h4>
+<p>Carrega apenas um subconjunto de tiles de um <code>TileSet</code> na VRAM. Útil para recarregar parte de um tileset sobrescrito ou, em mapas com streaming, para extrair somente os tiles necessários de um atlas completo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tileset</code></td><td>Ponteiro para a estrutura <code>TileSet</code> (descompactada "on the fly" se necessário).</td></tr>
+<tr><td><code>index</code></td><td>Índice de tile em VRAM onde iniciar a carga.</td></tr>
+<tr><td><code>fromTile</code></td><td>Índice do primeiro tile do conjunto a ser carregado.</td></tr>
+<tr><td><code>count</code></td><td>Número de tiles a carregar.</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se não houver memória para descompactar o TileSet (apenas com compressão).</p>
+<p class="note">Mesma ressalva de <code>VDP_loadTileSet()</code> quanto a <code>DMA_QUEUE</code> com recursos comprimidos.</p>
+</article>
+
+<article class="fn" id="fn-VDP_loadFontData">
+<h4><code>void VDP_loadFontData(const u32 *font, u16 length, TransferMethod tm)</code></h4>
+<p>Carrega dados de tile de uma fonte na VRAM, substituindo a fonte do sistema. Os dados são gravados a partir de <code>TILE_FONT_INDEX</code>; cada caractere ocupa um tile de 8x8 pixels.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>font</code></td><td>Ponteiro para os dados de tile da fonte.</td></tr>
+<tr><td><code>length</code></td><td>Número de caracteres da fonte (máximo <code>FONT_LENGTH</code>).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note">Prefira <code>VDP_loadFont()</code>, mais simples de usar. Veja também <code>VDP_loadTileData()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_loadFont">
+<h4><code>bool VDP_loadFont(const TileSet *font, TransferMethod tm)</code></h4>
+<p>Carrega uma fonte a partir de um <code>TileSet</code> na VRAM, substituindo a fonte do sistema. O TileSet deve conter uma fonte de 16x6 caracteres (veja a fonte padrão do SGDK em <code>res\image\font_default.png</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>font</code></td><td>TileSet contendo a fonte (descompactado "on the fly" se necessário).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se não houver memória para descompactar a fonte (apenas com compressão).</p>
+<p class="note">Com recurso comprimido evite <code>DMA_QUEUE</code>; use <code>DMA_QUEUE_COPY</code> ou descompacte antes. Os dados vão para <code>TILE_FONT_INDEX</code>, com no máximo <code>FONT_LENGTH</code> caracteres.</p>
+</article>
+
+<article class="fn" id="fn-VDP_loadDefaultFont">
+<h4><code>bool VDP_loadDefaultFont(TransferMethod tm)</code></h4>
+<p>Carrega a fonte padrão do SGDK na VRAM (em <code>TILE_FONT_INDEX</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> se não houver memória para descompactar a fonte (apenas com compressão).</p>
+</article>
+
+<article class="fn" id="fn-VDP_loadBMPTileData">
+<h4><code>void VDP_loadBMPTileData(const u32 *data, u16 index, u16 w, u16 h, u16 bmp_w)</code></h4>
+<p>Carrega dados de bitmap 4bpp na VRAM convertendo-os "on the fly" para o formato de tile do VDP. Muito útil ao trabalhar com imagens bitmap, mas a conversão consome tempo: use apenas em telas estáticas. Em situação de jogo, prefira <code>VDP_loadTileData()</code> com dados já convertidos.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados de bitmap 4bpp.</td></tr>
+<tr><td><code>index</code></td><td>Índice de tile onde iniciar a carga (base: <code>TILE_USER_INDEX</code>).</td></tr>
+<tr><td><code>w</code></td><td>Largura da região do bitmap a carregar (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da região do bitmap a carregar (em tiles).</td></tr>
+<tr><td><code>bmp_w</code></td><td>Largura total do bitmap (em tiles); pode diferir de <code>w</code>.</td></tr></table>
+<p class="note">Veja também <code>VDP_loadBMPTileDataEx()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_loadBMPTileDataEx">
+<h4><code>void VDP_loadBMPTileDataEx(const u32 *data, u16 index, u16 x, u16 y, u16 w, u16 h, u16 bmp_w)</code></h4>
+<p>Versão estendida de <code>VDP_loadBMPTileData()</code>: converte e carrega uma região específica (com origem em <code>x</code>,<code>y</code>) de um bitmap 4bpp na VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados de bitmap 4bpp.</td></tr>
+<tr><td><code>index</code></td><td>Índice de tile onde iniciar a carga.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial da região no bitmap (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial da região no bitmap (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da região a carregar (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da região a carregar (em tiles).</td></tr>
+<tr><td><code>bmp_w</code></td><td>Largura total do bitmap (em tiles).</td></tr></table>
+<p class="note">Conversão em tempo real: reserve para telas estáticas; em jogo use <code>VDP_loadTileData()</code> com tiles pré-convertidos.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fillTileData">
+<h4><code>void VDP_fillTileData(u8 value, u16 index, u16 num, bool wait)</code></h4>
+<p>Preenche dados de tile na VRAM com um valor de byte. Geralmente usada para limpar (zerar) tiles na VRAM. Internamente utiliza a operação de VRAM Fill do VDP.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>value</code></td><td>Valor (byte) usado no preenchimento.</td></tr>
+<tr><td><code>index</code></td><td>Índice de tile onde iniciar o preenchimento (base: <code>TILE_USER_INDEX</code>).</td></tr>
+<tr><td><code>num</code></td><td>Número de tiles a preencher.</td></tr>
+<tr><td><code>wait</code></td><td>Se <code>TRUE</code>, aguarda a conclusão da operação; se <code>FALSE</code>, retorna imediatamente — nesse caso é preciso esperar o fim do DMA (<code>DMA_waitCompletion()</code>) antes de acessar o VDP.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearTileMap">
+<h4><code>void VDP_clearTileMap(u16 planeAddr, u16 ind, u16 num, bool wait)</code></h4>
+<p>Limpa uma faixa linear do tilemap (escreve zeros) a partir de um índice de entrada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>planeAddr</code></td><td>Endereço do plane em VRAM: <code>VDP_BG_A</code>, <code>VDP_BG_B</code> ou <code>VDP_WINDOW</code>.</td></tr>
+<tr><td><code>ind</code></td><td>Índice da entrada de tilemap onde iniciar a limpeza.</td></tr>
+<tr><td><code>num</code></td><td>Número de entradas a limpar.</td></tr>
+<tr><td><code>wait</code></td><td>Se <code>TRUE</code>, aguarda a conclusão; se <code>FALSE</code>, retorna imediatamente (aguarde depois com <code>DMA_waitCompletion()</code> antes de acessar o VDP).</td></tr></table>
+<p class="note">Veja também <code>VDP_clearTileMapRect()</code> e <code>VDP_fillTileMap()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fillTileMap">
+<h4><code>void VDP_fillTileMap(u16 planeAddr, u16 tile, u16 ind, u16 num)</code></h4>
+<p>Preenche uma faixa linear do tilemap com um mesmo valor de atributos de tile.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>planeAddr</code></td><td>Endereço do plane em VRAM: <code>VDP_BG_A</code>, <code>VDP_BG_B</code> ou <code>VDP_WINDOW</code>.</td></tr>
+<tr><td><code>tile</code></td><td>Atributos do tile (veja <code>TILE_ATTR_FULL()</code> e <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>ind</code></td><td>Índice da entrada onde iniciar o preenchimento.</td></tr>
+<tr><td><code>num</code></td><td>Número de entradas a preencher.</td></tr></table>
+<p class="note">Veja também <code>VDP_fillTileMapRect()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapData">
+<h4><code>void VDP_setTileMapData(u16 planeAddr, const u16 *data, u16 ind, u16 num, u16 vramStep, TransferMethod tm)</code></h4>
+<p>Escreve dados de tilemap (entradas com atributos de tile) a partir de um índice linear. Use este método quando o recurso já foi gerado com o parâmetro <code>mapbase</code> definindo os atributos base (paleta, prioridade e índice base), pois é mais rápido que <code>VDP_setTileMapDataEx()</code>, que recalcula os atributos.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>planeAddr</code></td><td>Endereço do plane em VRAM: <code>VDP_BG_A</code>, <code>VDP_BG_B</code> ou <code>VDP_WINDOW</code>.</td></tr>
+<tr><td><code>data</code></td><td>Dados de atributos de tile (veja <code>TILE_ATTR_FULL()</code> / <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>ind</code></td><td>Índice da entrada onde iniciar a escrita.</td></tr>
+<tr><td><code>num</code></td><td>Número de entradas a escrever.</td></tr>
+<tr><td><code>vramStep</code></td><td>Incremento do endereço de VRAM após cada escrita (padrão = 2).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note">Veja também <code>VDP_setTileMapDataEx()</code> e <code>VDP_setTileMapDataRect()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapDataEx">
+<h4><code>void VDP_setTileMapDataEx(u16 planeAddr, const u16 *data, u16 basetile, u16 ind, u16 num, u16 vramStep)</code></h4>
+<p>Versão estendida de <code>VDP_setTileMapData()</code>: permite sobrepor os atributos base do tile (prioridade, paleta e índice base) via <code>basetile</code>, ao custo de mais tempo de processamento.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>planeAddr</code></td><td>Endereço do plane em VRAM: <code>VDP_BG_A</code>, <code>VDP_BG_B</code> ou <code>VDP_WINDOW</code>.</td></tr>
+<tr><td><code>data</code></td><td>Dados de atributos de tile (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>basetile</code></td><td>Índice base e flags de atributos aplicados sobre cada entrada (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>ind</code></td><td>Índice da entrada onde iniciar a escrita.</td></tr>
+<tr><td><code>num</code></td><td>Número de entradas a escrever.</td></tr>
+<tr><td><code>vramStep</code></td><td>Incremento do endereço de VRAM após cada escrita (padrão = 2).</td></tr></table>
+<p class="note">Se quiser processamento mais rápido, use <code>VDP_setTileMapData()</code> com o parâmetro <code>mapbase</code> na declaração do recurso IMAGE — mas aí a alocação de tiles fica fixa/estática.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapXY">
+<h4><code>void VDP_setTileMapXY(VDPPlane plane, u16 tile, u16 x, u16 y)</code></h4>
+<p>Escreve uma única entrada do tilemap na posição indicada do plane (com suporte a wrapping do tilemap).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tile</code></td><td>Atributos do tile (veja <code>TILE_ATTR_FULL()</code> e <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y (em tiles).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VDP_clearTileMapRect">
+<h4><code>void VDP_clearTileMapRect(VDPPlane plane, u16 x, u16 y, u16 w, u16 h)</code></h4>
+<p>Limpa a região retangular especificada do tilemap.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial da região (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial da região (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da região (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da região (em tiles).</td></tr></table>
+<p class="note"><code>VDP_clearTileMap()</code> é um método mais rápido para limpeza linear.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fillTileMapRect">
+<h4><code>void VDP_fillTileMapRect(VDPPlane plane, u16 tile, u16 x, u16 y, u16 w, u16 h)</code></h4>
+<p>Preenche a região retangular especificada do tilemap com um mesmo valor de atributos de tile.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tile</code></td><td>Atributos do tile (veja <code>TILE_ATTR_FULL()</code> e <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial da região (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial da região (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da região (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da região (em tiles).</td></tr></table>
+<p class="note">Veja <code>VDP_fillTileMap()</code> (mais rápido) e <code>VDP_fillTileMapRectInc()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fillTileMapRectInc">
+<h4><code>void VDP_fillTileMapRectInc(VDPPlane plane, u16 basetile, u16 x, u16 y, u16 w, u16 h)</code></h4>
+<p>Preenche a região retangular do tilemap incrementando automaticamente o índice do tile a cada célula: linha 0 recebe <code>basetile</code>, <code>basetile+1</code>, ...; linha 1 recebe <code>basetile+w</code>, <code>basetile+w+1</code>, e assim por diante. Conveniente para exibir imagens geradas ou simular um frame buffer.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>basetile</code></td><td>Atributos e índice base do tile (veja <code>TILE_ATTR_FULL()</code> e <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial da região (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial da região (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da região (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da região (em tiles).</td></tr></table>
+<p class="note">Veja também <code>VDP_fillTileMapRect()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapDataRect">
+<h4><code>void VDP_setTileMapDataRect(VDPPlane plane, const u16 *data, u16 x, u16 y, u16 w, u16 h, u16 wm, TransferMethod tm)</code></h4>
+<p>Escreve dados de tilemap na região retangular especificada do plane (com suporte a wrapping). Método rápido quando os atributos base já foram embutidos no recurso via <code>mapbase</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>data</code></td><td>Tilemap de origem com atributos de tile (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial da região (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial da região (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da região (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da região (em tiles).</td></tr>
+<tr><td><code>wm</code></td><td>Largura do tilemap de origem (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note">Veja <code>VDP_setTileMapDataRectEx()</code> e <code>VDP_setTileMapData()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapDataRectEx">
+<h4><code>void VDP_setTileMapDataRectEx(VDPPlane plane, const u16 *data, u16 basetile, u16 x, u16 y, u16 w, u16 h, u16 wm, TransferMethod tm)</code></h4>
+<p>Versão estendida de <code>VDP_setTileMapDataRect()</code>: permite sobrepor os atributos base (prioridade, paleta e índice base) via <code>basetile</code>, ao custo de mais processamento.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>data</code></td><td>Tilemap de origem com atributos de tile (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>basetile</code></td><td>Índice base e flags de atributos (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial da região (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial da região (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da região (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da região (em tiles).</td></tr>
+<tr><td><code>wm</code></td><td>Largura do tilemap de origem (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note">O uso de <code>DMA</code> direto é desaconselhado aqui: os dados precisam ser preparados em buffer temporário, o que fica mais lento que <code>CPU</code>. Já <code>DMA_QUEUE</code> é muito útil, pois prepara os dados e os transfere o mais rápido possível durante o VBlank.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapDataRow">
+<h4><code>void VDP_setTileMapDataRow(VDPPlane plane, const u16 *data, u16 row, u16 x, u16 w, TransferMethod tm)</code></h4>
+<p>Escreve uma linha (row) de dados de tilemap no plane (com suporte a wrapping). Método rápido quando os atributos base já vêm embutidos no recurso (<code>mapbase</code>). Útil para scrolling horizontal/vertical com atualização incremental de bordas.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>data</code></td><td>Tilemap de origem com atributos de tile (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>row</code></td><td>Linha do plane a ser escrita.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial na linha (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da linha a atualizar (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note">Veja <code>VDP_setTileMapDataRowEx()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapDataRowEx">
+<h4><code>void VDP_setTileMapDataRowEx(VDPPlane plane, const u16 *data, u16 basetile, u16 row, u16 x, u16 w, TransferMethod tm)</code></h4>
+<p>Versão estendida de <code>VDP_setTileMapDataRow()</code>: permite sobrepor os atributos base do tile via <code>basetile</code>, ao custo de mais processamento.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>data</code></td><td>Tilemap de origem com atributos de tile (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>basetile</code></td><td>Índice base e flags de atributos (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>row</code></td><td>Linha do plane a ser escrita.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial na linha (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da linha a atualizar (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note"><code>DMA</code> direto é desaconselhado (exige preparar buffer temporário, mais lento que <code>CPU</code>); <code>DMA_QUEUE</code> é muito útil por transferir durante o VBlank.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapDataColumnFast">
+<h4><code>void VDP_setTileMapDataColumnFast(VDPPlane plane, u16* data, u16 column, u16 y, u16 h, TransferMethod tm)</code></h4>
+<p>Escreve uma coluna completa de dados de tilemap já pré-arranjados como bloco contíguo, sem nenhum rearranjo — por isso é mais rápida que <code>VDP_setTileMapDataColumn()</code> e <code>VDP_setTileMapDataColumnEx()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>data</code></td><td>Dados de atributos de tile já preparados/arranjados para cópia direta (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>column</code></td><td>Coluna do plane a ser escrita.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial na coluna (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da coluna a atualizar (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note"><strong>AVISO:</strong> não funciona quando a largura do plane está configurada em 128 tiles (veja <code>VDP_setPlaneSize()</code>).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapDataColumn">
+<h4><code>void VDP_setTileMapDataColumn(VDPPlane plane, const u16 *data, u16 column, u16 y, u16 h, u16 wm, TransferMethod tm)</code></h4>
+<p>Escreve uma coluna de dados de tilemap no plane (com suporte a wrapping). Método rápido quando os atributos base já vêm do recurso (<code>mapbase</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>data</code></td><td>Tilemap de origem com atributos de tile (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>column</code></td><td>Coluna do plane a ser escrita.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial na coluna (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da coluna a atualizar (em tiles).</td></tr>
+<tr><td><code>wm</code></td><td>Largura do tilemap de origem (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note"><strong>AVISO:</strong> não funciona com plane de largura 128 (veja <code>VDP_setPlaneSize()</code>). Veja <code>VDP_setTileMapDataColumnEx()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapDataColumnEx">
+<h4><code>void VDP_setTileMapDataColumnEx(VDPPlane plane, const u16 *data, u16 basetile, u16 column, u16 y, u16 h, u16 wm, TransferMethod tm)</code></h4>
+<p>Versão estendida de <code>VDP_setTileMapDataColumn()</code>: permite sobrepor os atributos base do tile via <code>basetile</code>, ao custo de mais processamento.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>data</code></td><td>Tilemap de origem com atributos de tile (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>basetile</code></td><td>Índice base e flags de atributos (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>column</code></td><td>Coluna do plane a ser escrita.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial na coluna (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da coluna a atualizar (em tiles).</td></tr>
+<tr><td><code>wm</code></td><td>Largura do tilemap de origem (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note"><strong>AVISO:</strong> não funciona com plane de largura 128. <code>DMA</code> direto é desaconselhado (buffer temporário); prefira <code>CPU</code> ou <code>DMA_QUEUE</code> (transfere no VBlank).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMap">
+<h4><code>bool VDP_setTileMap(VDPPlane plane, const TileMap *tilemap, u16 x, u16 y, u16 w, u16 h, TransferMethod tm)</code></h4>
+<p>Carrega a região indicada de um <code>TileMap</code> na posição equivalente do plane (com suporte a wrapping). O TileMap é descompactado "on the fly" se necessário. Método rápido quando os atributos base já vêm do recurso (<code>mapbase</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tilemap</code></td><td>TileMap de origem.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial da região (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial da região (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da região (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da região (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> em caso de falha (por exemplo, memória insuficiente para descompactar o TileMap).</p>
+<p class="note">Com recurso comprimido, <code>DMA_QUEUE</code> é inseguro (o buffer pode ser sobrescrito antes do DMA); use <code>DMA_QUEUE_COPY</code> ou descompacte antes.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapEx">
+<h4><code>bool VDP_setTileMapEx(VDPPlane plane, const TileMap *tilemap, u16 basetile, u16 xp, u16 yp, u16 x, u16 y, u16 w, u16 h, TransferMethod tm)</code></h4>
+<p>Carrega a região indicada de um <code>TileMap</code> em uma posição arbitrária do plane, permitindo sobrepor os atributos base do tile via <code>basetile</code> (com suporte a wrapping).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tilemap</code></td><td>TileMap de origem (descompactado "on the fly" se necessário).</td></tr>
+<tr><td><code>basetile</code></td><td>Índice base e flags de atributos (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>xp</code></td><td>Posição X de destino no plane (em tiles).</td></tr>
+<tr><td><code>yp</code></td><td>Posição Y de destino no plane (em tiles).</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial da região na origem (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial da região na origem (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da região (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da região (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> em caso de falha (por exemplo, memória insuficiente para descompactação).</p>
+<p class="note"><code>DMA</code> direto é desaconselhado (buffer temporário, mais lento que <code>CPU</code>); <code>DMA_QUEUE</code> é útil por transferir no VBlank. Para máxima velocidade use <code>VDP_setTileMap()</code> com <code>mapbase</code> no recurso.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapRow">
+<h4><code>bool VDP_setTileMapRow(VDPPlane plane, const TileMap *tilemap, u16 row, u16 x, u16 w, TransferMethod tm)</code></h4>
+<p>Carrega uma linha completa de um <code>TileMap</code> na linha equivalente do plane (com wrapping quando necessário). Método rápido quando os atributos base já vêm do recurso (<code>mapbase</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tilemap</code></td><td>TileMap de origem (descompactado "on the fly" se necessário).</td></tr>
+<tr><td><code>row</code></td><td>Linha do plane a ser escrita.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial no tilemap de origem (em tiles).</td></tr>
+<tr><td><code>w</code></td><td>Largura da linha a atualizar (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> em caso de falha (por exemplo, memória insuficiente para descompactação).</p>
+<p class="note">Com recurso comprimido, evite <code>DMA_QUEUE</code>; use <code>DMA_QUEUE_COPY</code> ou descompacte antes. Veja <code>VDP_setTileMapRowEx()</code> e <code>VDP_setTileMapDataRow()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapRowEx">
+<h4><code>bool VDP_setTileMapRowEx(VDPPlane plane, const TileMap *tilemap, u16 basetile, u16 row, u16 x, u16 y, u16 w, TransferMethod tm)</code></h4>
+<p>Versão estendida de <code>VDP_setTileMapRow()</code>: carrega uma linha do <code>TileMap</code> no plane permitindo sobrepor os atributos base do tile via <code>basetile</code> e usar uma linha de origem diferente da linha de destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tilemap</code></td><td>TileMap de origem (descompactado "on the fly" se necessário).</td></tr>
+<tr><td><code>basetile</code></td><td>Índice base e flags de atributos (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>row</code></td><td>Linha do plane a ser escrita.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial no tilemap de origem (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Linha (posição Y) no tilemap de origem; pode ser diferente da linha do plane.</td></tr>
+<tr><td><code>w</code></td><td>Largura da linha a atualizar (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> em caso de falha (por exemplo, memória insuficiente para descompactação).</p>
+<p class="note"><code>DMA</code> direto é desaconselhado (buffer temporário); <code>DMA_QUEUE</code> transfere no VBlank e é a melhor opção assíncrona.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapColumn">
+<h4><code>bool VDP_setTileMapColumn(VDPPlane plane, const TileMap *tilemap, u16 column, u16 y, u16 h, TransferMethod tm)</code></h4>
+<p>Carrega uma coluna completa de um <code>TileMap</code> na coluna equivalente do plane (com wrapping quando necessário). Método rápido quando os atributos base já vêm do recurso (<code>mapbase</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tilemap</code></td><td>TileMap de origem (descompactado "on the fly" se necessário).</td></tr>
+<tr><td><code>column</code></td><td>Coluna do plane a ser escrita.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial no tilemap de origem (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da coluna a atualizar (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> em caso de falha (por exemplo, memória insuficiente para descompactação).</p>
+<p class="note"><strong>AVISO:</strong> não funciona com plane de largura 128 (veja <code>VDP_setPlaneSize()</code>). Com recurso comprimido, evite <code>DMA_QUEUE</code> (use <code>DMA_QUEUE_COPY</code>).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setTileMapColumnEx">
+<h4><code>bool VDP_setTileMapColumnEx(VDPPlane plane, const TileMap *tilemap, u16 basetile, u16 column, u16 x, u16 y, u16 h, TransferMethod tm)</code></h4>
+<p>Versão estendida de <code>VDP_setTileMapColumn()</code>: carrega uma coluna do <code>TileMap</code> no plane permitindo sobrepor os atributos base do tile via <code>basetile</code> e usar uma coluna de origem diferente da coluna de destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tilemap</code></td><td>TileMap de origem (descompactado "on the fly" se necessário).</td></tr>
+<tr><td><code>basetile</code></td><td>Índice base e flags de atributos (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>column</code></td><td>Coluna do plane a ser escrita.</td></tr>
+<tr><td><code>x</code></td><td>Coluna (posição X) no tilemap de origem; pode ser diferente da coluna do plane.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial no tilemap de origem (em tiles).</td></tr>
+<tr><td><code>h</code></td><td>Altura da coluna a atualizar (em tiles).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> em caso de falha (por exemplo, memória insuficiente para descompactação).</p>
+<p class="note"><strong>AVISO:</strong> não funciona com plane de largura 128. <code>DMA</code> direto é desaconselhado (buffer temporário); prefira <code>CPU</code> ou <code>DMA_QUEUE</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setMap">
+<h4><code>bool VDP_setMap(VDPPlane plane, const TileMap *tilemap, u16 basetile, u16 x, u16 y)</code></h4>
+<p>Carrega um tilemap completo no plane a partir da posição indicada, aplicando atributos base.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tilemap</code></td><td>TileMap de origem.</td></tr>
+<tr><td><code>basetile</code></td><td>Índice base e flags de atributos (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X de destino (em tiles).</td></tr>
+<tr><td><code>y</code></td><td>Posição Y de destino (em tiles).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> em caso de falha.</p>
+<p class="note"><strong>Obsoleta (deprecated):</strong> use <code>VDP_setTileMap()</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setMapEx">
+<h4><code>bool VDP_setMapEx(VDPPlane plane, const TileMap *tilemap, u16 basetile, u16 x, u16 y, u16 xm, u16 ym, u16 wm, u16 hm)</code></h4>
+<p>Carrega uma região de um tilemap no plane com atributos base e coordenadas de origem/destino independentes.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>plane</code></td><td>Plane alvo: <code>BG_A</code>, <code>BG_B</code> ou <code>WINDOW</code>.</td></tr>
+<tr><td><code>tilemap</code></td><td>TileMap de origem.</td></tr>
+<tr><td><code>basetile</code></td><td>Índice base e flags de atributos (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>x</code>, <code>y</code></td><td>Posição de destino no plane (em tiles).</td></tr>
+<tr><td><code>xm</code>, <code>ym</code></td><td>Posição inicial da região no tilemap de origem (em tiles).</td></tr>
+<tr><td><code>wm</code>, <code>hm</code></td><td>Largura e altura da região a copiar (em tiles).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>FALSE</code> em caso de falha.</p>
+<p class="note"><strong>Obsoleta (deprecated):</strong> use <code>VDP_setTileMapEx()</code> no lugar.</p>
+</article>
+</section>
+<section class="module" id="mod-vdp-spr">
+<h2>vdp_spr.h <span class="subtitle">Suporte de baixo nível a sprites do VDP</span></h2>
+<p class="mod-desc">Este módulo fornece métodos para alocar e manipular sprites de hardware do VDP em baixo nível. O VDP do Mega Drive/Genesis gerencia até 80 sprites simultâneos (em modo H40; 64 em H32), cada um com até 4x4 tiles (32x32 pixels). Os sprites são descritos na SAT (Sprite Attribute Table) em VRAM e encadeados pelo campo <code>link</code>, que define a ordem de avaliação/desenho. O SGDK mantém um cache da SAT em RAM (<code>vdpSpriteCache</code>): as funções <code>VDP_setSprite*</code> alteram o cache, e <code>VDP_updateSprites()</code> envia o cache ao VDP (idealmente via DMA no VBlank). Para uso de alto nível, prefira a engine de sprites (<code>sprite_eng.h</code>); use este módulo quando quiser controle manual e mínimo overhead.</p>
+
+<div class="defines">
+<h3>Constantes, macros e variáveis globais</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>SAT_MAX_SIZE</code></td><td><code>80</code></td><td>Tamanho máximo da Sprite Attribute Table usada pelo SGDK (a SAT comporta 128 entradas em VRAM, mas o VDP limita a exibição a 80 sprites).</td></tr>
+<tr><td><code>vdpSpriteCache</code></td><td><code>VDPSprite[SAT_MAX_SIZE + 16]</code></td><td>Variável global: cache em RAM da lista de sprites do VDP.</td></tr>
+<tr><td><code>lastAllocatedVDPSprite</code></td><td><code>VDPSprite*</code></td><td>Variável global: ponteiro para o último sprite alocado por <code>VDP_allocateSprites()</code>; útil para encadear (link) a partir do fim da lista alocada.</td></tr>
+<tr><td><code>highestVDPSpriteIndex</code></td><td><code>s16</code></td><td>Variável global: maior índice de sprite alocado desde o último <code>VDP_resetSprites()</code> / <code>VDP_releaseAllSprites()</code> (-1 = nenhum). Atenção: não é atualizada corretamente em liberações; use <code>VDP_refreshHighestAllocatedSpriteIndex()</code> para recalcular.</td></tr>
+</table>
+</div>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-VDPSprite">
+<h4><code>VDPSprite</code></h4>
+<p>Estrutura que replica o formato de um sprite de hardware do VDP (entrada de 8 bytes da SAT). As posições X e Y são deslocadas de 0x80 (0x80 corresponde à posição 0 na tela), o que permite esconder sprites fora da área visível.</p>
+<pre class="code">typedef struct
+{
+    s16 y;                       // posição Y - 0x80 (0x80 = 0 na tela), 10 bits [0-1023]
+    union
+    {
+        struct
+        {
+            u16 unused1  : 4;
+            u16 sizeH    : 2;    // largura: 0=8, 1=16, 2=24, 3=32 pixels
+            u16 sizeV    : 2;    // altura:  0=8, 1=16, 2=24, 3=32 pixels
+            u16 unused2  : 1;
+            u16 linkData : 7;    // link para o próximo sprite (0 = fim da lista)
+        };
+        struct
+        {
+            u8 size;             // tamanho combinado (veja SPRITE_SIZE)
+            u8 link;             // link (ordem de desenho)
+        };
+        u16 size_link;
+    };
+    union
+    {
+        u16 attribut;            // índice do tile + atributos (veja TILE_ATTR_FULL)
+        struct
+        {
+            u16 priority : 1;    // prioridade: 0=baixa, 1=alta
+            u16 palette  : 2;    // índice da paleta [0-3]
+            u16 flipV    : 1;    // flip vertical
+            u16 flipH    : 1;    // flip horizontal
+            u16 tile     : 11;   // índice do tile [0-2047]
+        };
+    };
+    s16 x;                       // posição X - 0x80 (0x80 = 0 na tela), 10 bits [0-1023]
+} VDPSprite;</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-SPRITE_SIZE">
+<h4><code>SPRITE_SIZE(w, h)</code></h4>
+<p>Macro com comportamento de função que codifica o tamanho do sprite no formato do campo <code>size</code> da estrutura de sprite do VDP.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>w</code></td><td>Largura do sprite em tiles (1 a 4).</td></tr>
+<tr><td><code>h</code></td><td>Altura do sprite em tiles (1 a 4).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> byte de tamanho no formato do hardware (<code>((w-1) &lt;&lt; 2) | (h-1)</code>).</p>
+</article>
+
+<article class="fn" id="fn-VDP_resetSprites">
+<h4><code>void VDP_resetSprites(void)</code></h4>
+<p>Limpa todos os sprites e reinicia a alocação de sprites do VDP (se houver).</p>
+</article>
+
+<article class="fn" id="fn-VDP_releaseAllSprites">
+<h4><code>void VDP_releaseAllSprites(void)</code></h4>
+<p>Libera todas as alocações de sprites do VDP, sem limpar o conteúdo do cache.</p>
+</article>
+
+<article class="fn" id="fn-VDP_allocateSprites">
+<h4><code>s16 VDP_allocateSprites(u16 num)</code></h4>
+<p>Aloca o número indicado de sprites de hardware do VDP e os encadeia entre si pelo campo <code>link</code> (o último sprite termina com link 0). O último sprite da lista alocada fica acessível em <code>lastAllocatedVDPSprite</code>, evitando percorrer a lista quando se quer encadeá-lo a outro sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>num</code></td><td>Número de sprites do VDP a alocar (deve ser &gt; 0).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> índice do primeiro sprite alocado na tabela de sprites do VDP, ou -1 se não houver sprites disponíveis suficientes.</p>
+<p class="note"><strong>AVISO:</strong> o VDP exibe no máximo 80 sprites em modo H40; em H32 o limite cai para 64, mesmo que a alocação permita até 80 (tamanho da SAT). Veja <code>VDP_releaseSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_releaseSprites">
+<h4><code>void VDP_releaseSprites(u16 index, u16 num)</code></h4>
+<p>Libera o número indicado de sprites do VDP a partir do índice dado, usando a informação do campo <code>link</code> para determinar quais sprites liberar quando mais de um é liberado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do primeiro sprite a liberar (0 &lt;= index &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>num</code></td><td>Número de sprites a liberar (deve ser &gt; 0).</td></tr></table>
+<p class="note">Veja <code>VDP_allocateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getAvailableSprites">
+<h4><code>u16 VDP_getAvailableSprites(void)</code></h4>
+<p>Informa quantos sprites do VDP ainda estão disponíveis para alocação na SAT.</p>
+<p class="returns"><strong>Retorna:</strong> número de sprites disponíveis na SAT.</p>
+<p class="note"><strong>AVISO:</strong> a SAT tem até 128 entradas em VRAM, mas o VDP só exibe até 80 sprites (H40) ou 64 (H32) simultaneamente.</p>
+</article>
+
+<article class="fn" id="fn-VDP_refreshHighestAllocatedSpriteIndex">
+<h4><code>s16 VDP_refreshHighestAllocatedSpriteIndex(void)</code></h4>
+<p>Recalcula e devolve o maior índice de sprite do VDP atualmente alocado. Esse valor pode ser usado para definir quantos sprites transferir com <code>VDP_updateSprites()</code>.</p>
+<p class="returns"><strong>Retorna:</strong> maior índice alocado, ou -1 se nenhum sprite do VDP está alocado.</p>
+<p class="note">A recomputação tem certo custo; use quando <code>highestVDPSpriteIndex</code> puder estar desatualizado (após liberações).</p>
+</article>
+
+<article class="fn" id="fn-VDP_clearSprites">
+<h4><code>void VDP_clearSprites(void)</code></h4>
+<p>Limpa todos os sprites do cache (todos deixam de ser exibidos).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpriteFull">
+<h4><code>void VDP_setSpriteFull(u16 index, s16 x, s16 y, u8 size, u16 attribut, u8 link)</code></h4>
+<p>Define todos os campos de um sprite (posição, tamanho, atributos e link) no cache da lista de sprites.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite a definir (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X do sprite na tela.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y do sprite na tela.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho do sprite (veja a macro <code>SPRITE_SIZE()</code>).</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos de tile do sprite (veja <code>TILE_ATTR_FULL()</code>).</td></tr>
+<tr><td><code>link</code></td><td>Link do sprite (índice do próximo sprite; 0 encerra a lista). Cuidado para não alterar links criados por <code>VDP_allocateSprites()</code> — nesse caso use <code>VDP_setSprite()</code>.</td></tr></table>
+<p class="note">As alterações só chegam ao VDP após <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSprite">
+<h4><code>void VDP_setSprite(u16 index, s16 x, s16 y, u8 size, u16 attribut)</code></h4>
+<p>Define um sprite no cache (posição, tamanho e atributos) sem alterar o campo <code>link</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>x</code></td><td>Posição X do sprite na tela.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y do sprite na tela.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho do sprite (veja <code>SPRITE_SIZE()</code>).</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos de tile do sprite (veja <code>TILE_ATTR_FULL()</code>).</td></tr></table>
+<p class="note">Veja <code>VDP_setSpriteFull()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpritePosition">
+<h4><code>void VDP_setSpritePosition(u16 index, s16 x, s16 y)</code></h4>
+<p>Define a posição de um sprite no cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>x</code></td><td>Nova posição X.</td></tr>
+<tr><td><code>y</code></td><td>Nova posição Y.</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpriteSize">
+<h4><code>void VDP_setSpriteSize(u16 index, u8 size)</code></h4>
+<p>Define o tamanho de um sprite no cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>size</code></td><td>Tamanho do sprite (veja <code>SPRITE_SIZE()</code>).</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpriteAttribut">
+<h4><code>void VDP_setSpriteAttribut(u16 index, u16 attribut)</code></h4>
+<p>Define os atributos de tile (prioridade, paleta, flips e índice do tile) de um sprite no cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos de tile (veja <code>TILE_ATTR_FULL()</code>).</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpriteLink">
+<h4><code>void VDP_setSpriteLink(u16 index, u8 link)</code></h4>
+<p>Define o link de um sprite no cache (índice do próximo sprite na lista de exibição).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>link</code></td><td>Link do sprite (índice do próximo sprite; 0 encerra a lista).</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_linkSprites">
+<h4><code>VDPSprite* VDP_linkSprites(u16 index, u16 num)</code></h4>
+<p>Encadeia sprites a partir do índice indicado, criando links em ordem ascendente simples (1 → 2 → 3 → ...).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do primeiro sprite a encadear (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>num</code></td><td>Número de links a criar (para ligar 2 sprites use 1).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o último sprite encadeado.</p>
+</article>
+
+<article class="fn" id="fn-VDP_updateSprites">
+<h4><code>void VDP_updateSprites(u16 num, TransferMethod tm)</code></h4>
+<p>Envia a lista de sprites do cache para a SAT no VDP. É esta chamada que efetiva na tela todas as modificações feitas com as funções <code>VDP_setSprite*</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>num</code></td><td>Número de sprites a transferir a partir do índice 0 (máximo = <code>MAX_SPRITE</code>). Com alocação dinâmica, use <code>highestVDPSpriteIndex + 1</code>.</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note">Veja <code>highestVDPSpriteIndex</code> e <code>VDP_refreshHighestAllocatedSpriteIndex()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpritePriority">
+<h4><code>void VDP_setSpritePriority(u16 index, bool priority)</code></h4>
+<p>Define a prioridade de um sprite no cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>priority</code></td><td>Prioridade do sprite: 0 = baixa, 1 = alta.</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getSpritePriority">
+<h4><code>bool VDP_getSpritePriority(u16 index)</code></h4>
+<p>Obtém a prioridade de um sprite a partir do cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> prioridade atual do sprite (0 = baixa, 1 = alta).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpritePalette">
+<h4><code>void VDP_setSpritePalette(u16 index, u16 palette)</code></h4>
+<p>Define a paleta de um sprite no cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>palette</code></td><td>Índice da paleta: valores válidos [0, 3].</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getSpritePalette">
+<h4><code>u16 VDP_getSpritePalette(u16 index)</code></h4>
+<p>Obtém o índice de paleta de um sprite a partir do cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> índice da paleta do sprite (0 a 3).</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpriteFlip">
+<h4><code>void VDP_setSpriteFlip(u16 index, bool flipH, bool flipV)</code></h4>
+<p>Define os flips horizontal e vertical de um sprite no cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>flipH</code></td><td>Flip horizontal: 0 = normal, 1 = espelhado.</td></tr>
+<tr><td><code>flipV</code></td><td>Flip vertical: 0 = normal, 1 = espelhado.</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpriteFlipH">
+<h4><code>void VDP_setSpriteFlipH(u16 index, bool flipH)</code></h4>
+<p>Define apenas o flip horizontal de um sprite no cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>flipH</code></td><td>Flip horizontal: 0 = normal, 1 = espelhado.</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpriteFlipV">
+<h4><code>void VDP_setSpriteFlipV(u16 index, bool flipV)</code></h4>
+<p>Define apenas o flip vertical de um sprite no cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>flipV</code></td><td>Flip vertical: 0 = normal, 1 = espelhado.</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getSpriteFlipH">
+<h4><code>bool VDP_getSpriteFlipH(u16 index)</code></h4>
+<p>Obtém o estado do flip horizontal de um sprite a partir do cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o sprite está espelhado horizontalmente.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getSpriteFlipV">
+<h4><code>bool VDP_getSpriteFlipV(u16 index)</code></h4>
+<p>Obtém o estado do flip vertical de um sprite a partir do cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o sprite está espelhado verticalmente.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setSpriteTile">
+<h4><code>void VDP_setSpriteTile(u16 index, u16 tile)</code></h4>
+<p>Define o índice do tile de um sprite no cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr>
+<tr><td><code>tile</code></td><td>Índice do tile: valores válidos [0, 2047].</td></tr></table>
+<p class="note">Veja <code>VDP_setSprite()</code> e <code>VDP_updateSprites()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getSpriteTile">
+<h4><code>u16 VDP_getSpriteTile(u16 index)</code></h4>
+<p>Obtém o índice do tile de um sprite a partir do cache.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice do sprite (deve ser &lt; <code>SAT_MAX_SIZE</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> índice do tile do sprite (0 a 2047).</p>
+</article>
+</section>
+<section class="module" id="mod-vdp-pal">
+<h2>vdp_pal.h <span class="subtitle">Paletas do VDP (obsoleto — use pal.h)</span></h2>
+<p class="mod-desc">Módulo inteiramente <strong>obsoleto (deprecated)</strong>: era a unidade original de manipulação de paletas do VDP e foi substituída pela unidade <code>pal.h</code>. Hoje o header contém apenas macros de compatibilidade que, se usadas, geram um <em>erro de compilação</em> proposital (via <code>_Pragma("GCC error ...")</code>) apontando a função equivalente da API <code>PAL_*</code>. Nenhuma dessas macros executa qualquer operação; elas existem só para orientar a migração de código antigo. Não inclua este header em código novo — use <code>pal.h</code>.</p>
+
+<h3>Funções (macros obsoletas — todas geram erro de compilação)</h3>
+
+<article class="fn" id="fn-VDP_getPaletteColor">
+<h4><code>VDP_getPaletteColor(index)</code></h4>
+<p>Obsoleta: lia uma cor da CRAM.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_getColor(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getPaletteColors">
+<h4><code>VDP_getPaletteColors(index, dest, count)</code></h4>
+<p>Obsoleta: lia várias cores da CRAM.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_getColors(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_getPalette">
+<h4><code>VDP_getPalette(num, pal)</code></h4>
+<p>Obsoleta: lia uma paleta completa (16 cores) da CRAM.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_getPalette(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setPaletteColor">
+<h4><code>VDP_setPaletteColor(index, value)</code></h4>
+<p>Obsoleta: escrevia uma cor na CRAM.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_setColor(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setPaletteColors">
+<h4><code>VDP_setPaletteColors(index, values, count)</code></h4>
+<p>Obsoleta: escrevia várias cores na CRAM.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_setColors(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_setPalette">
+<h4><code>VDP_setPalette(num, pal)</code></h4>
+<p>Obsoleta: escrevia uma paleta completa (16 cores) na CRAM.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_setPalette(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fade">
+<h4><code>VDP_fade(fromcol, tocol, palsrc, paldst, numframe, async)</code></h4>
+<p>Obsoleta: efeito de fade genérico entre paletas.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fade(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeTo">
+<h4><code>VDP_fadeTo(fromcol, tocol, pal, numframe, async)</code></h4>
+<p>Obsoleta: fade da paleta atual para a paleta indicada.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeTo(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeOut">
+<h4><code>VDP_fadeOut(fromcol, tocol, numframe, async)</code></h4>
+<p>Obsoleta: fade out (cores atuais para preto).</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeOut(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeIn">
+<h4><code>VDP_fadeIn(fromcol, tocol, pal, numframe, async)</code></h4>
+<p>Obsoleta: fade in (preto para as cores indicadas).</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeIn(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadePal">
+<h4><code>VDP_fadePal(numpal, palsrc, paldst, numframe, async)</code></h4>
+<p>Obsoleta: fade aplicado a uma paleta específica (16 cores).</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadePalette(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeToPal">
+<h4><code>VDP_fadeToPal(numpal, pal, numframe, async)</code></h4>
+<p>Obsoleta: fade de uma paleta específica para a paleta indicada.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeToPalette(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeOutPal">
+<h4><code>VDP_fadeOutPal(numpal, numframe, async)</code></h4>
+<p>Obsoleta: fade out de uma paleta específica.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeOutPalette(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeInPal">
+<h4><code>VDP_fadeInPal(numpal, pal, numframe, async)</code></h4>
+<p>Obsoleta: fade in de uma paleta específica.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeInPalette(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeAll">
+<h4><code>VDP_fadeAll(palsrc, paldst, numframe, async)</code></h4>
+<p>Obsoleta: fade global aplicado às 64 entradas de cor.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeAll(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeToAll">
+<h4><code>VDP_fadeToAll(pal, numframe, async)</code></h4>
+<p>Obsoleta: fade global para a paleta indicada.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeToAll(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeOutAll">
+<h4><code>VDP_fadeOutAll(numframe, async)</code></h4>
+<p>Obsoleta: fade out global (todas as cores para preto).</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeOutAll(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_fadeInAll">
+<h4><code>VDP_fadeInAll(pal, numframe, async)</code></h4>
+<p>Obsoleta: fade in global (preto para a paleta indicada).</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_fadeInAll(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_isDoingFade">
+<h4><code>VDP_isDoingFade()</code></h4>
+<p>Obsoleta: consultava se havia fade assíncrono em andamento.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_isDoingFade(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_waitFadeCompletion">
+<h4><code>VDP_waitFadeCompletion()</code></h4>
+<p>Obsoleta: aguardava a conclusão do fade assíncrono.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_waitFadeCompletion(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-VDP_interruptFade">
+<h4><code>VDP_interruptFade()</code></h4>
+<p>Obsoleta: interrompia o fade assíncrono em andamento.</p>
+<p class="note">Gera erro de compilação. Use <code>PAL_interruptFade()</code> no lugar.</p>
+</article>
+</section>
+<section class="module" id="mod-vram">
+<h2>vram.h <span class="subtitle">Alocação dinâmica de VRAM para tiles</span></h2>
+<p class="mod-desc">Unidade de gerenciamento de VRAM (memória de vídeo) do SGDK. Oferece alocação dinâmica de blocos de tiles dentro de uma região de VRAM, no estilo de um alocador de heap: você cria uma <code>VRAMRegion</code> cobrindo uma faixa de índices de tile, e então aloca (<code>VRAM_alloc</code>) e libera (<code>VRAM_free</code>) blocos conforme a necessidade — é o mecanismo usado, por exemplo, pela engine de sprites para carregar tiles sob demanda. Por convenção, os dados de tile devem ficar antes dos tilemaps na VRAM (0000-XXXX = tile data, XXXX-FFFF = tilemaps). Internamente, o campo <code>vram</code> da região é um buffer de contabilidade em que cada entrada guarda o tamanho do bloco em tiles (bits b14-b0) e um bit de estado (b15 = 1 usado, 0 livre); blocos livres adjacentes são reaproveitados nas próximas alocações.</p>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-VRAMRegion">
+<h4><code>VRAMRegion</code></h4>
+<p>Estrutura que define uma região de VRAM dedicada ao armazenamento dinâmico de tiles, com as informações de cache/contabilidade da alocação.</p>
+<pre class="code">typedef struct
+{
+    u16 startIndex;  // posição inicial da região (em tiles)
+    u16 endIndex;    // posição final da região (em tiles)
+    u16 *free;       // posição da próxima área livre
+    u16 *vram;       // buffer de contabilidade da alocação
+                     //   b14-b0 = tamanho do bloco (em tiles)
+                     //   b15    = 1: usado, 0: livre
+} VRAMRegion;</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-VRAM_createRegion">
+<h4><code>void VRAM_createRegion(VRAMRegion *region, u16 startIndex, u16 size)</code></h4>
+<p>Inicializa uma nova estrutura de região de VRAM: define os parâmetros e aloca (em RAM) a memória de contabilidade da região.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>region</code></td><td>Região a inicializar.</td></tr>
+<tr><td><code>startIndex</code></td><td>Índice de tile inicial da região na VRAM.</td></tr>
+<tr><td><code>size</code></td><td>Tamanho da região em tiles.</td></tr></table>
+<p class="note">Veja <code>VRAM_releaseRegion()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VRAM_releaseRegion">
+<h4><code>void VRAM_releaseRegion(VRAMRegion *region)</code></h4>
+<p>Libera a memória (em RAM) usada pela estrutura de contabilidade da região de VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>region</code></td><td>VRAMRegion a liberar.</td></tr></table>
+<p class="note">Veja <code>VRAM_createRegion()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VRAM_clearRegion">
+<h4><code>void VRAM_clearRegion(VRAMRegion *region)</code></h4>
+<p>Libera todas as alocações feitas na região de VRAM indicada, devolvendo-a ao estado totalmente livre (sem destruir a estrutura).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>region</code></td><td>Região de VRAM a limpar.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-VRAM_getFree">
+<h4><code>u16 VRAM_getFree(VRAMRegion *region)</code></h4>
+<p>Informa o total de tiles livres restantes na região de VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>region</code></td><td>Região de VRAM.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> número de tiles livres na região.</p>
+</article>
+
+<article class="fn" id="fn-VRAM_getAllocated">
+<h4><code>u16 VRAM_getAllocated(VRAMRegion *region)</code></h4>
+<p>Informa o total de tiles atualmente alocados na região de VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>region</code></td><td>Região de VRAM.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> número de tiles alocados na região.</p>
+</article>
+
+<article class="fn" id="fn-VRAM_getLargestFreeBlock">
+<h4><code>u16 VRAM_getLargestFreeBlock(VRAMRegion *region)</code></h4>
+<p>Informa o tamanho do maior bloco livre contíguo da região — valor relevante porque a fragmentação pode impedir uma alocação mesmo com tiles livres em quantidade suficiente no total.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>region</code></td><td>Região de VRAM.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> tamanho (em tiles) do maior bloco livre da região.</p>
+</article>
+
+<article class="fn" id="fn-VRAM_alloc">
+<h4><code>s16 VRAM_alloc(VRAMRegion *region, u16 size)</code></h4>
+<p>Tenta alocar o número indicado de tiles na região de VRAM e devolve o índice do bloco.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>region</code></td><td>Região de VRAM.</td></tr>
+<tr><td><code>size</code></td><td>Número de tiles a alocar (deve ser &gt; 0).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> índice em VRAM onde o bloco de tiles foi alocado, ou -1 se não há VRAM disponível suficiente na região.</p>
+<p class="note">Veja <code>VRAM_free()</code>.</p>
+</article>
+
+<article class="fn" id="fn-VRAM_free">
+<h4><code>void VRAM_free(VRAMRegion *region, u16 index)</code></h4>
+<p>Libera o bloco de VRAM previamente alocado no índice indicado da região.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>region</code></td><td>Região de VRAM.</td></tr>
+<tr><td><code>index</code></td><td>Índice do bloco de VRAM a liberar (o mesmo valor devolvido por <code>VRAM_alloc()</code>).</td></tr></table>
+<p class="note">Veja <code>VRAM_alloc()</code>.</p>
+</article>
+</section>
+<section class="module" id="mod-pal">
+<h2>pal.h <span class="subtitle">Paletas de cor do VDP (CRAM) e efeitos de fade</span></h2>
+<p class="mod-desc">Unidade de suporte a paletas (herdeira da antiga <code>vdp_pal.h</code>). O VDP do Mega Drive possui 4 paletas de 16 cores (64 entradas no total) armazenadas na CRAM (Color RAM). Cada cor usa 3 bits por componente no formato de 16 bits <code>xxxxBBBxGGGxRRRx</code> (RGB333). Este módulo oferece leitura e escrita de cores/paletas na CRAM (com métodos de transferência CPU/DMA), macros de conversão de RGB de 24 bits para o formato do VDP e um conjunto completo de efeitos de fade: assíncronos (processados a cada frame pelo sistema), síncronos (bloqueantes) e manuais (controlados passo a passo pela aplicação com <code>PAL_initFade()</code> / <code>PAL_doFadeStep()</code>).</p>
+
+<div class="defines">
+<h3>Constantes, macros e variáveis globais</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>VDPPALETTE_REDSFT</code></td><td><code>1</code></td><td>Deslocamento de bits do componente vermelho na cor do VDP.</td></tr>
+<tr><td><code>VDPPALETTE_GREENSFT</code></td><td><code>5</code></td><td>Deslocamento de bits do componente verde na cor do VDP.</td></tr>
+<tr><td><code>VDPPALETTE_BLUESFT</code></td><td><code>9</code></td><td>Deslocamento de bits do componente azul na cor do VDP.</td></tr>
+<tr><td><code>VDPPALETTE_REDMASK</code></td><td><code>0x000E</code></td><td>Máscara do componente vermelho.</td></tr>
+<tr><td><code>VDPPALETTE_GREENMASK</code></td><td><code>0x00E0</code></td><td>Máscara do componente verde.</td></tr>
+<tr><td><code>VDPPALETTE_BLUEMASK</code></td><td><code>0x0E00</code></td><td>Máscara do componente azul.</td></tr>
+<tr><td><code>VDPPALETTE_COLORMASK</code></td><td><code>0x0EEE</code></td><td>Máscara da cor completa (RGB333) do VDP.</td></tr>
+<tr><td><code>palette_black</code></td><td><code>const u16*</code></td><td>Variável global: paleta preta padrão.</td></tr>
+<tr><td><code>palette_grey</code>, <code>palette_red</code>, <code>palette_green</code>, <code>palette_blue</code></td><td><code>const u16[16]</code></td><td>Variáveis globais: paletas padrão em tons de cinza, vermelho, verde e azul.</td></tr>
+<tr><td><code>fadeCurrentPal</code></td><td><code>u16[64]</code></td><td>Variável global: paleta corrente do fade em andamento.</td></tr>
+<tr><td><code>fadeEndPal</code></td><td><code>u16[64]</code></td><td>Variável global: paleta final (de chegada) do fade em andamento.</td></tr>
+</table>
+</div>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-Palette">
+<h4><code>Palette</code></h4>
+<p>Estrutura que contém dados de cor de uma paleta (formato usado pelos recursos PALETTE gerados pelo rescomp).</p>
+<pre class="code">typedef struct
+{
+    u16 length;  // quantidade de cores desta paleta
+    u16* data;   // dados de cor (formato VDP, RGB333)
+} Palette;</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-RGB24_TO_VDPCOLOR">
+<h4><code>RGB24_TO_VDPCOLOR(color)</code></h4>
+<p>Macro com comportamento de função que converte uma cor RGB de 24 bits (0xRRGGBB) para o formato de cor do VDP (RGB333 com arredondamento e saturação por componente).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>color</code></td><td>Cor RGB de 24 bits.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> cor de 16 bits no formato do VDP (<code>xxxxBBBxGGGxRRRx</code>).</p>
+</article>
+
+<article class="fn" id="fn-RGB3_3_3_TO_VDPCOLOR">
+<h4><code>RGB3_3_3_TO_VDPCOLOR(r, g, b)</code></h4>
+<p>Macro com comportamento de função que monta uma cor do VDP a partir de componentes RGB333 (o VDP usa RGB333 internamente).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>r</code></td><td>Intensidade de vermelho (0-7).</td></tr>
+<tr><td><code>g</code></td><td>Intensidade de verde (0-7).</td></tr>
+<tr><td><code>b</code></td><td>Intensidade de azul (0-7).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> cor de 16 bits no formato do VDP.</p>
+</article>
+
+<article class="fn" id="fn-RGB8_8_8_TO_VDPCOLOR">
+<h4><code>RGB8_8_8_TO_VDPCOLOR(r, g, b)</code></h4>
+<p>Macro com comportamento de função que converte componentes RGB888 separados para cor do VDP (delega a <code>RGB24_TO_VDPCOLOR</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>r</code></td><td>Intensidade de vermelho (0-255).</td></tr>
+<tr><td><code>g</code></td><td>Intensidade de verde (0-255).</td></tr>
+<tr><td><code>b</code></td><td>Intensidade de azul (0-255).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> cor de 16 bits no formato do VDP.</p>
+</article>
+
+<article class="fn" id="fn-PAL_getColor">
+<h4><code>u16 PAL_getColor(u16 index)</code></h4>
+<p>Lê da CRAM o valor RGB da entrada de paleta especificada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice da cor (0-63).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> intensidade RGB (formato VDP) da cor no índice indicado.</p>
+</article>
+
+<article class="fn" id="fn-PAL_getColors">
+<h4><code>void PAL_getColors(u16 index, u16* dest, u16 count)</code></h4>
+<p>Lê <code>count</code> cores RGB da CRAM a partir do índice indicado e as grava no destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice da cor onde iniciar a leitura (0-63).</td></tr>
+<tr><td><code>dest</code></td><td>Destino onde gravar as cores lidas (deve comportar <code>count</code> cores).</td></tr>
+<tr><td><code>count</code></td><td>Número de cores a ler.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-PAL_getPalette">
+<h4><code>void PAL_getPalette(u16 numPal, u16* dest)</code></h4>
+<p>Lê uma paleta completa (16 cores) da CRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numPal</code></td><td>Número da paleta: <code>PAL0</code>, <code>PAL1</code>, <code>PAL2</code> ou <code>PAL3</code>.</td></tr>
+<tr><td><code>dest</code></td><td>Destino onde gravar as cores (pelo menos 16 words).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-PAL_setColor">
+<h4><code>void PAL_setColor(u16 index, u16 value)</code></h4>
+<p>Escreve uma cor RGB na CRAM na entrada de paleta especificada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice da cor a definir (0-63).</td></tr>
+<tr><td><code>value</code></td><td>Intensidade RGB (formato VDP) a gravar.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-PAL_setColors">
+<h4><code>void PAL_setColors(u16 index, const u16* pal, u16 count, TransferMethod tm)</code></h4>
+<p>Escreve várias cores RGB na CRAM a partir do índice indicado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice da cor onde iniciar a escrita (0-63).</td></tr>
+<tr><td><code>pal</code></td><td>Intensidades RGB a gravar.</td></tr>
+<tr><td><code>count</code></td><td>Número de cores a gravar.</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-PAL_setPaletteColors">
+<h4><code>void PAL_setPaletteColors(u16 index, const Palette* pal, TransferMethod tm)</code></h4>
+<p>Escreve as cores RGB de uma estrutura <code>Palette</code> na CRAM a partir do índice indicado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>index</code></td><td>Índice da cor onde iniciar a escrita (0-63).</td></tr>
+<tr><td><code>pal</code></td><td>Palette de origem.</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-PAL_setPalette">
+<h4><code>void PAL_setPalette(u16 numPal, const u16* pal, TransferMethod tm)</code></h4>
+<p>Escreve uma paleta completa (16 cores) na CRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numPal</code></td><td>Número da paleta: <code>PAL0</code>, <code>PAL1</code>, <code>PAL2</code> ou <code>PAL3</code>.</td></tr>
+<tr><td><code>pal</code></td><td>Paleta de origem (16 cores).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-PAL_setColorsDMA">
+<h4><code>PAL_setColorsDMA(index, pal, count)</code></h4>
+<p>Macro obsoleta de escrita de cores via DMA.</p>
+<p class="note"><strong>Obsoleta (deprecated):</strong> gera erro de compilação. Use <code>PAL_setColors(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-PAL_setPaletteColorsDMA">
+<h4><code>PAL_setPaletteColorsDMA(index, pal)</code></h4>
+<p>Macro obsoleta de escrita de <code>Palette</code> via DMA.</p>
+<p class="note"><strong>Obsoleta (deprecated):</strong> gera erro de compilação. Use <code>PAL_setPaletteColors(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-PAL_setPaletteDMA">
+<h4><code>PAL_setPaletteDMA(numPal, pal)</code></h4>
+<p>Macro obsoleta de escrita de paleta completa via DMA.</p>
+<p class="note"><strong>Obsoleta (deprecated):</strong> gera erro de compilação. Use <code>PAL_setPalette(..)</code> no lugar.</p>
+</article>
+
+<article class="fn" id="fn-PAL_initFade">
+<h4><code>bool PAL_initFade(u16 fromCol, u16 toCol, const u16* palSrc, const u16* palDst, u16 numFrame)</code></h4>
+<p>Inicializa uma operação de fade que será controlada manualmente por chamadas a <code>PAL_doFadeStep()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fromCol</code></td><td>Índice de cor inicial da operação de fade (0-63).</td></tr>
+<tr><td><code>toCol</code></td><td>Índice de cor final (0-63, &gt;= <code>fromCol</code>).</td></tr>
+<tr><td><code>palSrc</code></td><td>Paleta de partida do fade.</td></tr>
+<tr><td><code>palDst</code></td><td>Paleta de chegada do fade.</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em número de frames.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se a operação foi inicializada com sucesso.</p>
+<p class="note">IMPORTANTE: a paleta inicial só é efetivamente aplicada na próxima chamada de <code>SYS_doVBlankProcess()</code>. Veja <code>PAL_doFadeStep()</code> e <code>PAL_isManualFadeDone()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_doFadeStep">
+<h4><code>bool PAL_doFadeStep(void)</code></h4>
+<p>Processa um frame/iteração da operação de fade manual corrente (iniciada com <code>PAL_initFade()</code>).</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> enquanto o fade não estiver concluído; <code>FALSE</code> quando terminar.</p>
+<p class="note">IMPORTANTE: a paleta só é efetivamente atualizada na próxima chamada de <code>SYS_doVBlankProcess()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_isManualFadeDone">
+<h4><code>bool PAL_isManualFadeDone(void)</code></h4>
+<p>Indica se a operação de fade <em>manual</em> foi concluída.</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se o fade manual terminou, <code>FALSE</code> caso contrário.</p>
+<p class="note">AVISO: não confundir com <code>PAL_isDoingFade()</code>, que se refere ao fade <em>assíncrono</em>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fade">
+<h4><code>void PAL_fade(u16 fromCol, u16 toCol, const u16* palSrc, const u16* palDst, u16 numFrame, bool async)</code></h4>
+<p>Efeito geral de fade de paleta: interpola todas as entradas de cor entre <code>fromCol</code> e <code>toCol</code>, da paleta de partida à de chegada. Exemplo: para todas as entradas, use <code>fromCol = 0</code> e <code>toCol = 63</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fromCol</code></td><td>Índice de cor inicial do efeito (0-63).</td></tr>
+<tr><td><code>toCol</code></td><td>Índice de cor final (0-63, &gt;= <code>fromCol</code>).</td></tr>
+<tr><td><code>palSrc</code></td><td>Paleta de partida.</td></tr>
+<tr><td><code>palDst</code></td><td>Paleta de chegada.</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente (processo assíncrono); senão, bloqueia até o fade terminar.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-PAL_fadeTo">
+<h4><code>void PAL_fadeTo(u16 fromCol, u16 toCol, const u16* pal, u16 numFrame, bool async)</code></h4>
+<p>Faz fade das cores atuais da CRAM para a paleta indicada, na faixa de entradas escolhida.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fromCol</code></td><td>Índice de cor inicial (0-63).</td></tr>
+<tr><td><code>toCol</code></td><td>Índice de cor final (0-63, &gt;= <code>fromCol</code>).</td></tr>
+<tr><td><code>pal</code></td><td>Paleta de chegada.</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fade()</code> para mais informações.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fadeOut">
+<h4><code>void PAL_fadeOut(u16 fromCol, u16 toCol, u16 numFrame, bool async)</code></h4>
+<p>Efeito de fade out: das cores atuais para preto, na faixa de entradas escolhida.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fromCol</code></td><td>Índice de cor inicial (0-63).</td></tr>
+<tr><td><code>toCol</code></td><td>Índice de cor final (0-63, &gt;= <code>fromCol</code>).</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fade()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fadeIn">
+<h4><code>void PAL_fadeIn(u16 fromCol, u16 toCol, const u16* pal, u16 numFrame, bool async)</code></h4>
+<p>Efeito de fade in: do preto para a paleta indicada, na faixa de entradas escolhida.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fromCol</code></td><td>Índice de cor inicial (0-63).</td></tr>
+<tr><td><code>toCol</code></td><td>Índice de cor final (0-63, &gt;= <code>fromCol</code>).</td></tr>
+<tr><td><code>pal</code></td><td>Paleta de chegada.</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fade()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fadePalette">
+<h4><code>void PAL_fadePalette(u16 numPal, const u16* palSrc, const u16* palDst, u16 numFrame, bool async)</code></h4>
+<p>Efeito de fade aplicado a uma paleta específica (16 entradas), da paleta de partida à de chegada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numPal</code></td><td>Número da paleta usada no efeito (PAL0..PAL3).</td></tr>
+<tr><td><code>palSrc</code></td><td>Paleta de partida.</td></tr>
+<tr><td><code>palDst</code></td><td>Paleta de chegada.</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fade()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fadeToPalette">
+<h4><code>void PAL_fadeToPalette(u16 numPal, const u16* pal, u16 numFrame, bool async)</code></h4>
+<p>Faz fade da paleta atual (na CRAM) para a paleta indicada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numPal</code></td><td>Paleta a sofrer o fade (PAL0..PAL3).</td></tr>
+<tr><td><code>pal</code></td><td>Paleta de chegada.</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fadePalette()</code> para mais informações.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fadeOutPalette">
+<h4><code>void PAL_fadeOutPalette(u16 numPal, u16 numFrame, bool async)</code></h4>
+<p>Fade out (cores atuais para preto) de uma paleta específica.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numPal</code></td><td>Paleta a sofrer o fade (PAL0..PAL3).</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fadePalette()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fadeInPalette">
+<h4><code>void PAL_fadeInPalette(u16 numPal, const u16* pal, u16 numFrame, bool async)</code></h4>
+<p>Fade in (preto para a paleta indicada) de uma paleta específica.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numPal</code></td><td>Paleta a sofrer o fade (PAL0..PAL3).</td></tr>
+<tr><td><code>pal</code></td><td>Paleta de chegada.</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fadePalette()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fadeAll">
+<h4><code>void PAL_fadeAll(const u16* palSrc, const u16* palDst, u16 numFrame, bool async)</code></h4>
+<p>Efeito de fade global: aplicado a todas as 64 entradas de cor da CRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>palSrc</code></td><td>Paleta de partida (deve conter 64 entradas de cor).</td></tr>
+<tr><td><code>palDst</code></td><td>Paleta de chegada (deve conter 64 entradas de cor).</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-PAL_fadeToAll">
+<h4><code>void PAL_fadeToAll(const u16* pal, u16 numFrame, bool async)</code></h4>
+<p>Fade global das cores atuais para a paleta indicada (todas as 64 entradas).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pal</code></td><td>Paleta de chegada (deve conter 64 entradas).</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fadeAll()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fadeOutAll">
+<h4><code>void PAL_fadeOutAll(u16 numFrame, bool async)</code></h4>
+<p>Fade out global (todas as 64 entradas de cor para preto).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fadeAll()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_fadeInAll">
+<h4><code>void PAL_fadeInAll(const u16* pal, u16 numFrame, bool async)</code></h4>
+<p>Fade in global (preto para a paleta indicada, todas as 64 entradas).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>pal</code></td><td>Paleta de chegada (deve conter 64 entradas).</td></tr>
+<tr><td><code>numFrame</code></td><td>Duração do fade em frames.</td></tr>
+<tr><td><code>async</code></td><td>Se <code>TRUE</code>, retorna imediatamente; senão, bloqueia até concluir.</td></tr></table>
+<p class="note">Veja <code>PAL_fadeAll()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_isDoingFade">
+<h4><code>bool PAL_isDoingFade(void)</code></h4>
+<p>Indica se há uma operação de fade <em>assíncrona</em> de paleta em andamento.</p>
+<p class="returns"><strong>Retorna:</strong> <code>TRUE</code> se um fade assíncrono está em execução.</p>
+<p class="note">AVISO: não confundir com <code>PAL_isManualFadeDone()</code>, que se refere ao fade <em>manual</em> processado com <code>PAL_doFadeStep()</code>.</p>
+</article>
+
+<article class="fn" id="fn-PAL_waitFadeCompletion">
+<h4><code>void PAL_waitFadeCompletion(void)</code></h4>
+<p>Bloqueia até a conclusão da operação de fade (assíncrona) de paleta em andamento.</p>
+</article>
+
+<article class="fn" id="fn-PAL_interruptFade">
+<h4><code>void PAL_interruptFade(void)</code></h4>
+<p>Interrompe imediatamente qualquer efeito de fade assíncrono de paleta em andamento.</p>
+</article>
+</section>

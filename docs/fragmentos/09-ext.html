@@ -1,0 +1,688 @@
+<section class="module" id="mod-console">
+<h2>console.h <span class="subtitle">Console de texto TTY</span></h2>
+<p class="mod-desc">Este módulo fornece um console de texto simples no estilo TTY. Os caracteres são escritos como um fluxo contínuo: as linhas quebram automaticamente quando a borda horizontal da tela é atingida e, ao chegar à parte inferior da janela, o conteúdo do console rola uma linha para cima e uma linha em branco é inserida. Por padrão, o console ocupa uma tela padrão de 40x28 tiles, e todos os atributos de texto (fonte, paleta, plano etc.) são herdados das configurações de texto do SGDK. As atualizações de tela são feitas por DMA (método alterável com <code>CON_setTransferMethod()</code>). Um dos principais casos de uso são mensagens de assert: o estado do Genesis pode ser resetado automaticamente antes da exibição do texto (veja a macro <code>con_assert</code>). O módulo só é compilado quando <code>MODULE_CONSOLE != 0</code> em <code>config.h</code>.</p>
+
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>str(s)</code> / <code>xstr(s)</code></td><td>—</td><td>Macros auxiliares para transformar números/tokens em string (stringificação em duas etapas).</td></tr>
+</table>
+</div>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-vsprintf_t">
+<h4><code>vsprintf_t</code></h4>
+<p>Protótipo de callback para uma função <code>vsprintf()</code> que usa <code>va_list</code>. Usado por <code>CON_setVsprintf()</code>.</p>
+<pre class="code">typedef int (*vsprintf_t)(char *buf, const char *fmt, va_list args);</pre>
+</article>
+<article class="type" id="type-vsnprintf_t">
+<h4><code>vsnprintf_t</code></h4>
+<p>Protótipo de callback para uma função <code>vsnprintf()</code> que usa <code>va_list</code>. Usado por <code>CON_setVsnprintf()</code>.</p>
+<pre class="code">typedef int (*vsnprintf_t)(char *buf, int count, const char *fmt, va_list args);</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-con_assert">
+<h4><code>con_assert(condition)</code></h4>
+<p>Macro funcional que verifica uma condição (assert). Se a expressão avaliar como falsa, o console é resetado (<code>CON_reset()</code>), o sistema é agendado para reset no próximo write (<code>CON_systemResetOnNextWrite()</code>), uma mensagem de erro com arquivo, linha e a condição que falhou é impressa no console e a execução trava em um laço infinito.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>condition</code></td><td>Expressão que deve avaliar como TRUE; caso contrário, uma mensagem de erro é impressa no console e o sistema é resetado ao estado padrão do SGDK.</td></tr></table>
+<p class="note">Pode ser desabilitada definindo <code>NDEBUG</code> ou usando o build de release do SGDK (<code>LIB_DEBUG=0</code>) — nesses casos a macro expande para nada.</p>
+</article>
+
+<article class="fn" id="fn-CON_ASSERT">
+<h4><code>CON_ASSERT(condition)</code></h4>
+<p>Versão em maiúsculas de <code>con_assert()</code>. Comportamento idêntico.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>condition</code></td><td>Expressão que deve avaliar como TRUE.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-CON_sprintf">
+<h4><code>int CON_sprintf(char* buf, const char *fmt, ...)</code></h4>
+<p>Função <code>sprintf</code> no estilo da biblioteca C padrão. Compõe uma string formatada: caso <code>fmt</code> contenha especificadores de formato (iniciados por <code>%</code>), os argumentos adicionais são formatados e inseridos na string resultante. É um wrapper para uma função do tipo <code>vsprintf</code>; por padrão usa o <code>vsprintf()</code> embutido do SGDK, mas outra implementação (ex.: <code>stbsp_vsprintf()</code>) pode ser registrada com <code>CON_setVsprintf()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>buf</code></td><td>Ponteiro para o buffer onde a C-string resultante será armazenada.</td></tr>
+<tr><td><code>fmt</code></td><td>C-string com o texto a escrever, podendo conter especificadores de formato (estilo printf).</td></tr>
+<tr><td><code>...</code></td><td>Argumentos adicionais, um para cada especificador de formato presente em <code>fmt</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número total de caracteres escritos, sem contar o caractere nulo final acrescentado automaticamente.</p>
+</article>
+
+<article class="fn" id="fn-CON_snprintf">
+<h4><code>int CON_snprintf(char* buf, int count, const char *fmt, ...)</code></h4>
+<p>Função <code>snprintf</code> no estilo da biblioteca C padrão, com limite de tamanho do buffer. É um wrapper para uma função do tipo <code>vsnprintf</code>; por padrão nenhuma implementação está registrada — use <code>CON_setVsnprintf()</code> para registrar uma (ex.: <code>stbsp_vsnprintf()</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>buf</code></td><td>Ponteiro para o buffer onde a C-string resultante será armazenada.</td></tr>
+<tr><td><code>count</code></td><td>Número máximo de bytes usados no buffer; a string gerada tem no máximo <code>count-1</code> caracteres, deixando espaço para o nulo final.</td></tr>
+<tr><td><code>fmt</code></td><td>C-string com o texto a escrever, podendo conter especificadores de formato (estilo printf).</td></tr>
+<tr><td><code>...</code></td><td>Argumentos adicionais, um para cada especificador de formato.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número total de caracteres escritos, sem contar o caractere nulo final.</p>
+</article>
+
+<article class="fn" id="fn-CON_setVsprintf">
+<h4><code>void CON_setVsprintf(vsprintf_t vsprintf_func)</code></h4>
+<p>Registra uma função <code>vsprintf</code> padrão como callback interno de <code>CON_sprintf()</code>. A função fornecida deve receber <code>va_list</code> conforme o tipo <code>vsprintf_t</code>. Implementações possíveis: o <code>vsprintf()</code> do SGDK ou <code>stbsp_vsprintf()</code> (stb).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>vsprintf_func</code></td><td>Ponteiro para uma função vsprintf no estilo da biblioteca C padrão.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-CON_setVsnprintf">
+<h4><code>void CON_setVsnprintf(vsnprintf_t vsnprintf_func)</code></h4>
+<p>Registra uma função <code>vsnprintf</code> padrão como callback interno de <code>CON_snprintf()</code>. A função fornecida deve receber <code>va_list</code> conforme o tipo <code>vsnprintf_t</code>. Uma implementação possível é <code>stbsp_vsnprintf()</code> (stb). Quando registrada, também protege o line buffer do console contra overflow em <code>CON_write()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>vsnprintf_func</code></td><td>Ponteiro para uma função vsnprintf no estilo da biblioteca C padrão.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-CON_setConsoleSize">
+<h4><code>void CON_setConsoleSize(u16 left, u16 top, u16 width, u16 height)</code></h4>
+<p>Define a posição e o tamanho da janela do console, em tiles. Se <code>width</code> ou <code>height</code> forem 0, os valores adequados serão determinados a partir de <code>VDP_getScreenWidth()</code> e <code>VDP_getScreenHeight()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>left</code></td><td>Coluna mais à esquerda da janela, em tiles. Padrão: 0.</td></tr>
+<tr><td><code>top</code></td><td>Linha mais acima da janela, em tiles. Padrão: 0.</td></tr>
+<tr><td><code>width</code></td><td>Largura da janela do console em tiles. Padrão: 40.</td></tr>
+<tr><td><code>height</code></td><td>Altura da janela do console em tiles. Padrão: 28.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-CON_setLineBufferSize">
+<h4><code>void CON_setLineBufferSize(u16 size)</code></h4>
+<p>Define o tamanho do buffer de caracteres usado internamente para compor a string formatada impressa no console. Ao chamar esta função, a memória do buffer anterior é liberada imediatamente; o novo buffer é alocado na próxima chamada a <code>CON_write()</code>. O padrão é 160 caracteres.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>size</code></td><td>Tamanho do buffer em bytes (número de caracteres que ele comporta, incluindo o nulo final).</td></tr></table>
+<p class="note">Se apenas uma função vsprintf estiver registrada, o usuário é responsável por garantir que <code>CON_write()</code> não exceda o buffer. Com uma função vsnprintf registrada, o tamanho é verificado automaticamente, prevenindo overflow.</p>
+</article>
+
+<article class="fn" id="fn-CON_setTransferMethod">
+<h4><code>void CON_setTransferMethod(TransferMethod tm)</code></h4>
+<p>Define o método de transferência usado para enviar o tile buffer do console à VRAM do VDP (usado com <code>VDP_setTileMapDataRect()</code>). O valor padrão é <code>DMA</code>, que faz upload imediato.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>tm</code></td><td>Método de transferência. Valores aceitos: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code>, <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="note">Com <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>, o usuário é responsável por disparar o upload de DMA, por exemplo chamando <code>SYS_doVBlankProcess()</code>.</p>
+</article>
+
+<article class="fn" id="fn-CON_reset">
+<h4><code>void CON_reset()</code></h4>
+<p>Reseta o console às configurações padrão. É um atalho para: <code>CON_setConsoleSize(0, 0, 40, 28)</code>, <code>CON_setLineBufferSize(160)</code> e <code>CON_setTransferMethod(DMA)</code>.</p>
+</article>
+
+<article class="fn" id="fn-CON_systemResetOnNextWrite">
+<h4><code>void CON_systemResetOnNextWrite()</code></h4>
+<p>Agenda um reset do sistema ao estado padrão do SGDK para a próxima chamada de <code>CON_write()</code>. No reset são chamadas as funções: <code>SYS_disableInts()</code>, <code>YM2612_reset()</code>, <code>PSG_init()</code>, <code>Z80_init()</code> e <code>VDP_init()</code>. Útil para exibir mensagens de erro/assert a partir de um estado de vídeo desconhecido.</p>
+</article>
+
+<article class="fn" id="fn-CON_clear">
+<h4><code>void CON_clear()</code></h4>
+<p>Limpa a janela do console preenchendo-a com caracteres de espaço. Assume-se que o primeiro tile da fonte é um espaço. As configurações de DMA também se aplicam aqui.</p>
+</article>
+
+<article class="fn" id="fn-CON_setCursorPosition">
+<h4><code>void CON_setCursorPosition(u16 x, u16 y)</code></h4>
+<p>Define uma nova posição (coluna e linha) para o cursor — a posição onde o próximo caractere aparecerá quando <code>CON_write()</code> for processado. A posição (0,0) corresponde ao tile no canto superior esquerdo da janela.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>x</code></td><td>Nova posição x do cursor.</td></tr>
+<tr><td><code>y</code></td><td>Nova posição y do cursor.</td></tr></table>
+</article>
+
+<article class="fn" id="fn-CON_getCursorPosition">
+<h4><code>V2u16 CON_getCursorPosition()</code></h4>
+<p>Obtém a posição atual do cursor do console.</p>
+<p class="returns"><strong>Retorna:</strong> um vetor 2D com a posição (x,y) atual do cursor, onde (0,0) é o canto superior esquerdo da janela do console.</p>
+</article>
+
+<article class="fn" id="fn-CON_write">
+<h4><code>int CON_write(const char *fmt, ...)</code></h4>
+<p>Escreve uma C-string formatada na janela do console, com quebra automática de linha ao atingir a borda horizontal e rolagem automática (scroll) quando a parte inferior da janela é atingida. Internamente usa a função vsprintf ou vsnprintf registrada via <code>CON_setVsprintf()</code>/<code>CON_setVsnprintf()</code>. Durante o processamento, interpreta e executa sequências de controle: <code>\b</code> (backspace), <code>\n</code> (nova linha), <code>\r</code> (retorno de carro), <code>\t</code> (tabulação horizontal) e <code>\v</code> (tabulação vertical).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>fmt</code></td><td>C-string com o texto a escrever, podendo conter especificadores de formato (estilo printf).</td></tr>
+<tr><td><code>...</code></td><td>Argumentos adicionais, um para cada especificador de formato.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número total de caracteres escritos, sem contar o caractere nulo final.</p>
+</article>
+</section>
+<section class="module" id="mod-everdrive">
+<h2>everdrive.h <span class="subtitle">Suporte ao flashcart Everdrive</span></h2>
+<p class="mod-desc">Este módulo, escrito por Krikzz (criador do hardware), fornece suporte ao flashcart Everdrive para Mega Drive. Ele expõe os registradores de hardware do cartucho (porta SPI, configuração, mapeamento de ROM etc.), macros de controle e funções de baixo nível para acessar o cartão SD/MMC do cartucho e a memória flash (EPROM) interna. Use-o apenas quando o jogo/aplicação for executado em um cartucho Everdrive real — é a base sobre a qual o módulo <code>fat16.h</code> funciona. Compilado somente quando <code>MODULE_EVERDRIVE != 0</code>. A variável global <code>extern u16 cfg</code> mantém a cópia em RAM do registrador de configuração.</p>
+
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>_SS</code> … <code>_CART</code></td><td>0–13</td><td>Índices de bits do registrador de configuração: <code>_SS</code>(0), <code>_FULL_SPEED</code>(1), <code>_SPI16</code>(2), <code>_GAME_MODE</code>(3), <code>_SMS_MODE</code>(4), <code>_HARD_RESET</code>(5), <code>_RAM_MODE_1</code>(6), <code>_RAM_ON</code>(7), <code>_VBL_CATCH</code>(8), <code>_MEGAKEY_ON</code>(9), <code>_MEGAKEY_REGION_1</code>(10), <code>_SSF_MODE_ON</code>(11), <code>_RAM_FS</code>(12), <code>_CART</code>(13).</td></tr>
+<tr><td><code>_SPI_READY</code>, <code>_RY</code>, <code>_SMS_KEY</code>, <code>_SD_CART</code></td><td>0–3</td><td>Índices de bits do registrador de estado: SPI pronto, flash pronta (ready), tecla SMS pressionada, presença de cartão SD.</td></tr>
+<tr><td><code>SPI_PORT</code></td><td><code>0xA13000</code></td><td>Registrador de hardware: porta SPI (acesso ao SD/MMC).</td></tr>
+<tr><td><code>CFG_PORT</code></td><td><code>0xA13002</code></td><td>Registrador de hardware: configuração do Everdrive.</td></tr>
+<tr><td><code>VBL_PORT</code></td><td><code>0xA13004</code></td><td>Registrador de hardware: captura de VBlank.</td></tr>
+<tr><td><code>SRAM_BANK_PORT</code></td><td><code>0xA13006</code></td><td>Registrador de hardware: banco de SRAM.</td></tr>
+<tr><td><code>VER_PORT</code></td><td><code>0xA13008</code></td><td>Registrador de hardware: versão do firmware/hardware.</td></tr>
+<tr><td><code>ROM_MAP_PORT</code></td><td><code>0xA1300A</code></td><td>Registrador de hardware: mapeamento de ROM.</td></tr>
+<tr><td><code>IS_RY</code></td><td>—</td><td>Testa se a flash está pronta (bit <code>_RY</code>).</td></tr>
+<tr><td><code>IS_SPI_READY</code></td><td>—</td><td>Testa se a porta SPI está pronta (bit <code>_SPI_READY</code>).</td></tr>
+<tr><td><code>IS_SMS_KEY_PRESSED</code></td><td>—</td><td>Testa se a tecla SMS está pressionada.</td></tr>
+<tr><td><code>IS_SD_SLOT_EMPTY</code></td><td>—</td><td>Testa se o slot de cartão SD está vazio.</td></tr>
+<tr><td><code>SPI_HI_SPEED_ON/OFF</code></td><td>—</td><td>Liga/desliga o modo de alta velocidade da SPI (bit <code>_FULL_SPEED</code>).</td></tr>
+<tr><td><code>SPI16_ON/OFF</code></td><td>—</td><td>Liga/desliga o modo SPI de 16 bits (bit <code>_SPI16</code>).</td></tr>
+<tr><td><code>SS_ON/OFF</code></td><td>—</td><td>Ativa/desativa o slave select da SPI (bit <code>_SS</code>, lógica invertida).</td></tr>
+<tr><td><code>CART_ON/OFF</code></td><td>—</td><td>Ativa/desativa o modo cartucho (bit <code>_CART</code>, lógica invertida).</td></tr>
+<tr><td><code>RAM_ON/OFF</code></td><td>—</td><td>Liga/desliga a RAM do cartucho (bit <code>_RAM_ON</code>).</td></tr>
+<tr><td><code>VBL_CATCH_ON/OFF</code></td><td>—</td><td>Liga/desliga a captura de VBlank (bit <code>_VBL_CATCH</code>).</td></tr>
+<tr><td><code>SPI_BUSY</code></td><td>—</td><td>Laço de espera ocupada até a SPI ficar pronta (<code>while(!IS_SPI_READY)</code>).</td></tr>
+<tr><td><code>EPR_BUSY</code></td><td>—</td><td>Laço de espera ocupada até a flash ficar pronta (<code>while(!IS_RY)</code>).</td></tr>
+</table>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-CFGC">
+<h4><code>CFGC(bit)</code></h4>
+<p>Macro funcional que limpa (zera) o bit indicado na variável global <code>cfg</code> e grava o novo valor no registrador <code>CFG_PORT</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>bit</code></td><td>Índice do bit de configuração a limpar (ex.: <code>_FULL_SPEED</code>).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-CFGS">
+<h4><code>CFGS(bit)</code></h4>
+<p>Macro funcional que seta (coloca em 1) o bit indicado na variável global <code>cfg</code> e grava o novo valor no registrador <code>CFG_PORT</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>bit</code></td><td>Índice do bit de configuração a setar (ex.: <code>_SPI16</code>).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-evd_mmcInit">
+<h4><code>u8 evd_mmcInit()</code></h4>
+<p>Inicializa o cartão SD/MMC do Everdrive. Deve ser executada apenas uma vez; após isso o cartão está pronto para uso.</p>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso.</p>
+</article>
+
+<article class="fn" id="fn-evd_mmcRdBlock">
+<h4><code>u8 evd_mmcRdBlock(u32 mmc_addr, u8 *stor)</code></h4>
+<p>Lê um bloco de 512 bytes do cartão SD/MMC.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>mmc_addr</code></td><td>Endereço no cartão; deve ser múltiplo de 512.</td></tr>
+<tr><td><code>stor</code></td><td>Buffer de destino para os 512 bytes lidos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso.</p>
+</article>
+
+<article class="fn" id="fn-evd_mmcWrBlock">
+<h4><code>u8 evd_mmcWrBlock(u32 mmc_addr, u8 *data_ptr)</code></h4>
+<p>Escreve um bloco de 512 bytes no cartão SD/MMC.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>mmc_addr</code></td><td>Endereço no cartão; deve ser múltiplo de 512.</td></tr>
+<tr><td><code>data_ptr</code></td><td>Buffer com os 512 bytes a gravar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso.</p>
+</article>
+
+<article class="fn" id="fn-evd_eprEraseBlock">
+<h4><code>void evd_eprEraseBlock(u32 rom_addr)</code></h4>
+<p>Apaga um setor de 64 KB da memória flash do cartucho.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>rom_addr</code></td><td>Endereço na flash; deve ser múltiplo de 64 KB.</td></tr></table>
+<p class="note">O código desta função deve residir em RAM, pois a memória ROM fica inacessível durante o processo de apagamento. ATENÇÃO: pode danificar a BIOS do cartucho se forem apagados setores na faixa 0 – 0x40000.</p>
+</article>
+
+<article class="fn" id="fn-evd_eprProgBlock">
+<h4><code>void evd_eprProgBlock(u16 *data, u32 rom_addr, u32 len)</code></h4>
+<p>Grava dados na memória flash do cartucho. Cada byte da flash deve ter sido apagado previamente com <code>evd_eprEraseBlock()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>data</code></td><td>Ponteiro para os dados (words de 16 bits) a gravar.</td></tr>
+<tr><td><code>rom_addr</code></td><td>Endereço de destino na flash.</td></tr>
+<tr><td><code>len</code></td><td>Tamanho dos dados; deve ser múltiplo de 4.</td></tr></table>
+<p class="note">O código desta função deve residir em RAM, pois a ROM fica inacessível durante a gravação. ATENÇÃO: pode danificar a BIOS do cartucho se a área 0 – 0x40000 for escrita.</p>
+</article>
+
+<article class="fn" id="fn-evd_init">
+<h4><code>void evd_init(u16 def_rom_bank, u8 _is_ram_app)</code></h4>
+<p>Inicializa o Everdrive, configurando o mapeamento de ROM e o modo de execução da aplicação.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>def_rom_bank</code></td><td>0 se a aplicação reside na área 0 – 0x400000; 1 se reside na área 0x400000 – 0x800000.</td></tr>
+<tr><td><code>_is_ram_app</code></td><td>0 se a aplicação foi montada para executar em ROM; 1 se foi montada para executar em RAM.</td></tr></table>
+</article>
+</section>
+<section class="module" id="mod-fat16">
+<h2>fat16.h <span class="subtitle">Sistema de arquivos FAT16 (Everdrive)</span></h2>
+<p class="mod-desc">Este módulo, também de autoria de Krikzz, fornece suporte básico ao sistema de arquivos FAT16 através do hardware do flashcart Everdrive (usa as rotinas de SD/MMC de <code>everdrive.h</code> por baixo). Permite inicializar a partição, listar diretórios, abrir, ler, escrever, criar e apagar arquivos no cartão SD do Everdrive. Use-o somente em conjunto com um cartucho Everdrive; requer <code>MODULE_FAT16 != 0</code> (e, na prática, o módulo Everdrive habilitado). A variável global <code>extern Fat16PBR fat16_pbr</code> guarda o Partition Boot Record lido na inicialização. Todas as funções retornam <code>u8</code> como código de resultado (0 = sucesso, seguindo a convenção do módulo Everdrive).</p>
+
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>FAT16_DIR_SIZE</code></td><td>32</td><td>Número máximo de registros (entradas) mantidos em um <code>Fat16Dir</code>.</td></tr>
+<tr><td><code>FAT16_TYPE_FILE</code></td><td><code>0x20</code></td><td>Valor de flag que identifica um registro do tipo arquivo.</td></tr>
+<tr><td><code>FAT16_TYPE_DIR</code></td><td><code>0x10</code></td><td>Valor de flag que identifica um registro do tipo diretório.</td></tr>
+</table>
+</div>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-Fat16PBR">
+<h4><code>Fat16PBR</code></h4>
+<p>Partition Boot Record da partição FAT16 — estrutura com a geometria e os metadados do volume, preenchida por <code>fat16Init()</code> na variável global <code>fat16_pbr</code>.</p>
+<pre class="code">typedef struct {
+    u8  pointer[3];                // instrução de salto do setor de boot (offset 0)
+    u8  oem_name[8];               // nome OEM (offset 3)
+    u16 byte_per_sector;           // bytes por setor (offset 11)
+    u8  sector_per_cluster;        // setores por cluster (offset 13)
+    u16 reserved_sectors;          // setores reservados (offset 14)
+    u8  fat_copys;                 // número de cópias da FAT (offset 16)
+    u16 root_size;                 // tamanho do diretório raiz (offset 17)
+    u16 small_partition_sectros;   // total de setores (partições pequenas) (offset 19)
+    u8  drive_type;                // tipo do drive (offset 21)
+    u16 sectors_per_fat;           // setores por FAT (offset 22)
+    u16 sectors_per_track;         // setores por trilha (offset 24)
+    u16 heads;                     // número de cabeças (offset 26)
+    u32 first_reserved_sectors;    // setores ocultos/reservados iniciais (offset 28)
+    u32 total_partition_sectors;   // total de setores da partição (offset 32)
+    u16 drive_number;              // número do drive (offset 36)
+    u8  extendet_boot_signature;   // assinatura de boot estendida (offset 38)
+    u32 serial_number;             // número de série do volume (offset 39)
+    u8  drive_name[11];            // rótulo do volume (offset 43)
+    u8  fat_name[8];               // nome do sistema de arquivos ("FAT16") (offset 54)
+} Fat16PBR;</pre>
+</article>
+<article class="type" id="type-Fat16Record">
+<h4><code>Fat16Record</code></h4>
+<p>Registro de diretório: descreve um arquivo ou subdiretório dentro de um <code>Fat16Dir</code>.</p>
+<pre class="code">typedef struct {
+    u8  name[14];      // nome curto (8.3)
+    u8  long_name[38]; // nome longo (LFN)
+    u8  flags;         // atributos (FAT16_TYPE_FILE ou FAT16_TYPE_DIR)
+    u16 entry;         // cluster/entrada inicial
+    u32 size;          // tamanho do arquivo em bytes
+    u32 rec_addr;      // endereço do registro no disco
+} Fat16Record;</pre>
+</article>
+<article class="type" id="type-Fat16Dir">
+<h4><code>Fat16Dir</code></h4>
+<p>Diretório carregado em memória: array de até <code>FAT16_DIR_SIZE</code> registros.</p>
+<pre class="code">typedef struct {
+    Fat16Record records[FAT16_DIR_SIZE]; // entradas do diretório
+    u16 entry;                           // entrada (cluster) do diretório
+    volatile u16 size;                   // número de registros válidos
+} Fat16Dir;</pre>
+</article>
+<article class="type" id="type-Fat16File">
+<h4><code>Fat16File</code></h4>
+<p>Handle de arquivo aberto, com buffer interno de um setor (512 bytes) e estado de posição para leitura/escrita sequencial.</p>
+<pre class="code">typedef struct {
+    Fat16Record *record;   // registro de diretório do arquivo
+    u8  sectror_buff[512]; // buffer do setor atual
+    u16 cluster;           // cluster atual
+    u32 pos;               // posição corrente no arquivo
+    u32 addr_buff;         // endereço bufferizado
+    u8  sector;            // setor atual dentro do cluster
+} Fat16File;</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-fat16Init">
+<h4><code>u8 fat16Init()</code></h4>
+<p>Inicializa o suporte a FAT16: localiza a partição no cartão SD/MMC do Everdrive e preenche a estrutura global <code>fat16_pbr</code> com o Partition Boot Record. Deve ser chamada antes de qualquer outra função do módulo (com o cartão já inicializado).</p>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso; outro valor em caso de erro.</p>
+</article>
+
+<article class="fn" id="fn-fat16OpenDir">
+<h4><code>u8 fat16OpenDir(u16 entry, Fat16Dir *dir)</code></h4>
+<p>Abre um diretório e carrega seus registros (arquivos e subdiretórios) na estrutura <code>Fat16Dir</code> fornecida.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>entry</code></td><td>Entrada (cluster) do diretório a abrir; use a entrada do diretório raiz ou o campo <code>entry</code> de um <code>Fat16Record</code> com flag <code>FAT16_TYPE_DIR</code>.</td></tr>
+<tr><td><code>dir</code></td><td>Estrutura de destino que receberá os registros do diretório.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso; outro valor em caso de erro.</p>
+</article>
+
+<article class="fn" id="fn-fat16OpenFile">
+<h4><code>u8 fat16OpenFile(Fat16Record *rec, Fat16File *file)</code></h4>
+<p>Abre um arquivo a partir do seu registro de diretório, inicializando o handle <code>Fat16File</code> (posição, cluster inicial e buffer de setor) para operações de leitura/escrita sequenciais.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>rec</code></td><td>Registro de diretório do arquivo (obtido de um <code>Fat16Dir</code>).</td></tr>
+<tr><td><code>file</code></td><td>Handle de arquivo a ser inicializado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso; outro valor em caso de erro.</p>
+</article>
+
+<article class="fn" id="fn-fat16ReadNextSector">
+<h4><code>u8 fat16ReadNextSector(Fat16File *file)</code></h4>
+<p>Lê o próximo setor (512 bytes) do arquivo para o buffer interno <code>file-&gt;sectror_buff</code>, avançando a posição de leitura e seguindo a cadeia de clusters na FAT quando necessário.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>file</code></td><td>Handle de arquivo aberto com <code>fat16OpenFile()</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso; outro valor em caso de erro.</p>
+</article>
+
+<article class="fn" id="fn-fat16WriteNextSector">
+<h4><code>u8 fat16WriteNextSector(Fat16File *file)</code></h4>
+<p>Grava o conteúdo do buffer interno <code>file-&gt;sectror_buff</code> no próximo setor (512 bytes) do arquivo, avançando a posição de escrita.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>file</code></td><td>Handle de arquivo aberto com <code>fat16OpenFile()</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso; outro valor em caso de erro.</p>
+</article>
+
+<article class="fn" id="fn-fat16DeleteRecord">
+<h4><code>u8 fat16DeleteRecord(Fat16Record *rec)</code></h4>
+<p>Apaga um registro (arquivo) do sistema de arquivos, liberando suas entradas.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>rec</code></td><td>Registro de diretório a apagar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso; outro valor em caso de erro.</p>
+</article>
+
+<article class="fn" id="fn-fat16CreateRecord">
+<h4><code>u8 fat16CreateRecord(Fat16Record *rec, Fat16Dir *dir)</code></h4>
+<p>Cria um novo registro (arquivo) dentro do diretório indicado, com base nos dados preenchidos em <code>rec</code> (nome, flags etc.).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>rec</code></td><td>Registro a criar (preenchido pelo chamador).</td></tr>
+<tr><td><code>dir</code></td><td>Diretório onde o registro será criado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso; outro valor em caso de erro.</p>
+</article>
+
+<article class="fn" id="fn-fat16SkipSectors">
+<h4><code>u8 fat16SkipSectors(Fat16File *file, u16 num)</code></h4>
+<p>Avança a posição do arquivo pulando o número indicado de setores, sem transferir os dados para o buffer — útil para posicionamento (seek) grosseiro dentro do arquivo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>file</code></td><td>Handle de arquivo aberto.</td></tr>
+<tr><td><code>num</code></td><td>Número de setores (de 512 bytes) a pular.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso; outro valor em caso de erro.</p>
+</article>
+</section>
+<section class="module" id="mod-link-cable">
+<h2>link_cable.h <span class="subtitle">Protocolo de comunicação via Link Cable (LCP)</span></h2>
+<p class="mod-desc">O Link Cable Protocol (LCP), de autoria de BlodTor (2025), é um protocolo de troca de dados via SEGA Link Cable entre dois consoles Mega Drive / Genesis conectados pela porta do segundo controle (porta 2). Um console atua como <em>master</em> e o outro como <em>slave</em>: o master chama <code>LCP_masterCycle()</code> no código principal do jogo para disparar uma interrupção externa (EX-INT, nível 2 do 68000) no slave, cujo tratador troca os pacotes de forma assíncrona. Os dados são serializados em pacotes de objetos tipados — 2 bytes de tipo seguidos dos dados do objeto (transferidos 2 bytes por ciclo) — com verificação por checksum. Use este módulo para jogos multiplayer em dois consoles. Compilado quando <code>MODULE_LINK_CABLE != 0</code>.</p>
+<p class="mod-desc">Sequência típica no master: <code>LCP_init()</code> → <code>LCP_objectToPacketForSend()</code> (uma ou mais vezes) → <code>LCP_masterCycle()</code> → <code>LCP_getNextObjectFromReceivePacket()</code> até retornar 0 → <code>LCP_close()</code>. No slave: <code>LCP_init()</code> → <code>LCP_open()</code> → <code>LCP_objectToPacketForSend()</code> → (troca ocorre no tratador de interrupção) → <code>LCP_getNextObjectFromReceivePacket()</code> até 0 → <code>LCP_close()</code>. Importante: os tipos de objeto (<code>objectType</code>), a tabela de tamanhos (<code>objectSizes</code>, em bytes, múltiplos de 2) e a lógica que decide qual console é master/slave devem ser definidos no código do SEU jogo (veja os exemplos do jogo 'Super Turbo MEGA Pac-Man 2.1'). Para depurar erros de transmissão, use <code>LCP_getError()</code>.</p>
+
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>LCP_Ctrl</code></td><td><code>*(vu8*) 0xA1000B</code></td><td>Registrador de direção de E/S da porta 2 (CTRL 2 na documentação SEGA). Bit 7 (INT): habilita interrupção pelo sinal da linha SYN; bit 6 (PC6): modo da linha SYN (0 = entrada, 1 = saída); bits 0–5 (PC0–PC5): modo das linhas de dados.</td></tr>
+<tr><td><code>LCP_Data</code></td><td><code>*(vu8*) 0xA10005</code></td><td>Registrador de dados da porta 2 (registrador DATA). Os 4 bits baixos (0–3) transportam os dados; o bit 5 de um console corresponde ao bit 6 do outro (handshake cruzado), e os bits 0–3 são compartilhados entre os dois consoles.</td></tr>
+<tr><td><code>LCP_BIT5</code></td><td><code>0b00100000</code></td><td>Máscara com apenas o bit 5 em 1 — usada para sinalizar ao outro console que ele pode ler/enviar dados.</td></tr>
+<tr><td><code>LCP_BIT6</code></td><td><code>0b01000000</code></td><td>Máscara com apenas o bit 6 em 1 — usada para testar se o outro console sinalizou dados prontos/lidos.</td></tr>
+<tr><td><code>LCP_BIT7_AND_BIT5</code></td><td><code>0b10100000</code></td><td>Bits 7 e 5 em 1, para <code>LCP_Ctrl</code>: interrupção EX-INT habilitada, PC5 em saída e demais linhas em entrada — estado de recepção de dados no tratador <code>LCP_slaveCycle()</code>.</td></tr>
+<tr><td><code>LCP_BIT_5_3_2_1_0</code></td><td><code>0b00101111</code></td><td>Bits 5, 3, 2, 1, 0 em 1, para <code>LCP_Ctrl</code>: interrupção desabilitada, pinos 0–3 e 5 em saída — estado de transmissão de dados (ciclo de escrita na porta 2).</td></tr>
+<tr><td><code>LCP_LO_BITS</code></td><td><code>0b00001111</code></td><td>Máscara para zerar os 4 bits altos de um byte.</td></tr>
+<tr><td><code>LCP_HI_BITS</code></td><td><code>0b11110000</code></td><td>Máscara para zerar os 4 bits baixos de um byte.</td></tr>
+<tr><td><code>LCP_TIME_OUT</code></td><td><code>0x40</code></td><td>Timeout de espera por dados do outro console (espera pela mudança do bit 6 em <code>LCP_Data</code>).</td></tr>
+<tr><td><code>LCP_PACKET_SIZE</code></td><td>2048</td><td>Tamanho máximo do pacote de transmissão via Link Cable.</td></tr>
+</table>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-LCP_open">
+<h4><code>void LCP_open()</code></h4>
+<p>Abre a porta 2 do console para troca de dados via Link Cable por interrupção externa EX-INT (máscara de interrupção nível 2 do Motorola 68000) e configura a função de callback chamada quando a interrupção ocorre. Deve ser chamada no console <em>slave</em>: só depois dela o master consegue acionar o tratador <code>LCP_slaveCycle()</code> no slave.</p>
+</article>
+
+<article class="fn" id="fn-LCP_init">
+<h4><code>void LCP_init()</code></h4>
+<p>Inicializa a porta 2 do console para troca de dados via Link Cable, no modo de escrita direta na porta e posterior leitura. As interrupções EX-INT ficam desabilitadas para este console e as variáveis globais do protocolo são zeradas. Primeira função a chamar tanto no master quanto no slave.</p>
+</article>
+
+<article class="fn" id="fn-LCP_close">
+<h4><code>void LCP_close()</code></h4>
+<p>Fecha a porta do console para a troca de dados via Link Cable, desabilitando o tratador de interrupção externa EX-INT (nível 2 do 68000). Após o fechamento no slave, ele deixa de responder às interrupções externas geradas pelo master.</p>
+</article>
+
+<article class="fn" id="fn-LCP_objectToPacketForSend">
+<h4><code>void LCP_objectToPacketForSend(u8 *transferObject, u16 objectType, u16 *objectTypeSizes)</code></h4>
+<p>Copia o objeto <code>transferObject</code>, como array de bytes, para o pacote de envio (<code>LCP_sendPacket</code>) a ser transmitido via Link Cable. Estrutura do pacote: os 2 primeiros bytes contêm o tipo do objeto (nunca 0), seguidos dos dados do objeto (de 2 em 2 bytes) conforme a tabela <code>objectTypeSizes</code>. Vários objetos podem ser enfileirados em sequência, enquanto couberem no buffer.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>transferObject</code></td><td>Objeto a enviar, tratado como array de bytes.</td></tr>
+<tr><td><code>objectType</code></td><td>Tipo do objeto (número que corresponde ao índice no array de tamanhos). Não pode ser 0.</td></tr>
+<tr><td><code>objectTypeSizes</code></td><td>Array com os tamanhos de cada tipo de objeto (definido no código principal do SEU jogo).</td></tr></table>
+<p class="note">Códigos de erro (obtidos por <code>LCP_getError() &amp; 0x000F</code>): <code>0xC</code> — tamanho do objeto negativo ou zero; <code>0xD</code> — tamanho do objeto excede o espaço restante do pacote; <code>0xF</code> — índice de início dos dados do pacote maior que o índice de fim.</p>
+</article>
+
+<article class="fn" id="fn-LCP_getNextObjectFromReceivePacket">
+<h4><code>u16 LCP_getNextObjectFromReceivePacket(u8 *transferObject, u16 *objectSizes)</code></h4>
+<p>Extrai o próximo objeto, como array de bytes, do pacote recebido (<code>LCP_ReceivePacket</code>) via Link Cable. Como vários objetos podem ser transmitidos de uma vez, chame esta função repetidamente até que retorne 0, indicando que todos os objetos foram extraídos.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>transferObject</code></td><td>Buffer que recebe o próximo objeto extraído do pacote.</td></tr>
+<tr><td><code>objectSizes</code></td><td>Array com os tamanhos de cada tipo de objeto (definido no código principal do SEU jogo).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o tipo do objeto recebido, ou 0 se nenhum objeto pôde ser extraído do pacote.</p>
+<p class="note">Códigos de erro (<code>LCP_getError() &amp; 0xF000</code>): <code>0x1000</code> — não há objeto no pacote (todos já extraídos ou nada transmitido); <code>0x2000</code> — tamanho do objeto a extrair negativo ou zero; <code>0x3000</code> — tamanho excede os dados restantes do pacote recebido; <code>0x4000</code> — tamanho excede o espaço restante do array <code>LCP_ReceivePacket</code>.</p>
+</article>
+
+<article class="fn" id="fn-LCP_masterCycle">
+<h4><code>void LCP_masterCycle()</code></h4>
+<p>Ciclo de transmissão e recepção de dados via Link Cable para o console <em>master</em>. No início, desabilita todo o processamento de interrupções e zera <code>LCP_timeOut</code> e <code>LCP_error</code>. Dispara a interrupção externa no slave, envia o pacote de saída (tamanho, dados, checksum) e recebe o pacote de resposta do slave, validando checksums. Tanto em caso de erro quanto de sucesso, ao final chama internamente <code>LCP_masterCycleEnd()</code> para restaurar o estado correto da porta 2 e reabilitar as interrupções.</p>
+<p class="note">Códigos de erro (<code>LCP_getError() &amp; 0x00F0</code>): <code>0x10</code> — falha em <code>LCP_startSendCycle()</code> (início da transmissão); <code>0x20</code> — falha no envio do tamanho do pacote; <code>0x30</code> — falha no envio dos dados do pacote; <code>0x40</code> — falha no envio do checksum; <code>0x50</code> — falha em <code>LCP_endSendCycle()</code>; <code>0x60</code> — falha em <code>LCP_startReceiveCycle()</code>; <code>0x70</code> — falha na recepção do checksum do slave; <code>0x80</code> — checksum calculado difere do recebido; <code>0x90</code> — falha na recepção do tamanho do pacote; <code>0xA0</code> — falha na recepção dos dados; <code>0xB0</code> — falha no ciclo principal de recepção do checksum; <code>0xC0</code> — checksum calculado difere do recebido; <code>0xD0</code> — falha em <code>LCP_endReceiveCycle()</code>; <code>0xE0</code> — falha ao iniciar o envio do checksum ao slave; <code>0xF0</code> — falha no envio do checksum ao slave.</p>
+</article>
+
+<article class="fn" id="fn-LCP_getError">
+<h4><code>u16 LCP_getError()</code></h4>
+<p>Retorna o registro de erros da transmissão de dados via SEGA Link Cable. Se o valor for <code>0x0000</code>, nenhum erro ocorreu. O código é dividido em nibbles: os 4 bits baixos do byte baixo (0x0001–0x000F) indicam erros de recepção de dados; os 4 bits altos do byte baixo (0x0010–0x00F0), erros de transmissão; os 4 bits baixos do byte alto (0x0100–0x0F00), erros de recepção/transmissão de pacote; e os 4 bits altos do byte alto (0x1000–0xF000), erros de extração de objetos do pacote.</p>
+<p class="returns"><strong>Retorna:</strong> o valor de <code>LCP_error</code>.</p>
+</article>
+</section>
+<section class="module" id="mod-flash">
+<h2>flash.h <span class="subtitle">Interface de baixo nível para flash NOR</span></h2>
+<p class="mod-desc">Módulo de Jesus Alonso (doragasu) para leitura, apagamento e escrita de dados diretamente no chip flash NOR do cartucho. Funciona com qualquer chip compatível com o formato AMD que implemente a interface CFI (testado com S29GL032 e W29GL032C), e exige que o cartucho tenha a linha #WE conectada ao chip (caso da maioria dos flashcarts, mas não garantido). É a base do sistema de save em flash para cartuchos sem SRAM/EEPROM — normalmente usado através do módulo de mais alto nível <code>saveman.h</code>.</p>
+<p class="mod-desc">Limitações importantes: endereços devem ser pares, ponteiros de dados devem estar alinhados a word, e as funções <code>flash_init()</code>, <code>flash_sector_erase()</code> e <code>flash_program()</code> (além de <code>flash_copy()</code>) devem ser executadas com interrupções desabilitadas e o Z80 parado. A flash sofre desgaste (wear): evite salvar com muita frequência ou implemente wear leveling. Recomenda-se fortemente que o cartucho tenha o pino #RESET ligado ao sinal #RESET do console; caso contrário, um RESET durante apagamento/gravação provavelmente congelará a máquina.</p>
+
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>FLASH_REGION_MAX</code></td><td>4</td><td>Número máximo de regiões de flash (o padrão CFI permite até 4).</td></tr>
+</table>
+</div>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-flash_region">
+<h4><code>struct flash_region</code></h4>
+<p>Metadados de uma região da flash, composta por vários setores de mesmo tamanho.</p>
+<pre class="code">struct flash_region {
+    uint32_t start_addr;  // endereço inicial do setor
+    uint16_t num_sectors; // número de setores
+    uint16_t sector_len;  // tamanho do setor em unidades de 256 bytes
+};</pre>
+</article>
+<article class="type" id="type-flash_chip">
+<h4><code>struct flash_chip</code></h4>
+<p>Metadados do chip flash, descrevendo o layout completo de memória.</p>
+<pre class="code">struct flash_chip {
+    uint32_t len;         // tamanho do chip em bytes
+    uint16_t num_regions; // número de regiões no chip
+    struct flash_region region[FLASH_REGION_MAX]; // array de regiões
+};</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-flash_init">
+<h4><code>int16_t flash_init(void)</code></h4>
+<p>Inicializa o chip flash, consultando seus metadados via CFI. Deve ser chamada uma única vez, antes de qualquer outra função do módulo.</p>
+<p class="returns"><strong>Retorna:</strong> código de status da inicialização (0/positivo em sucesso, negativo em erro).</p>
+<p class="note">ATENÇÃO: deve ser chamada com interrupções desabilitadas e o Z80 parado.</p>
+</article>
+
+<article class="fn" id="fn-flash_deinit">
+<h4><code>void flash_deinit(void)</code></h4>
+<p>Desinicializa o chip flash, liberando o estado do módulo.</p>
+</article>
+
+<article class="fn" id="fn-flash_metadata_get">
+<h4><code>const struct flash_chip *flash_metadata_get(void)</code></h4>
+<p>Obtém os metadados do chip flash detectado (tamanho, regiões e setores).</p>
+<p class="returns"><strong>Retorna:</strong> uma referência imutável para os metadados do chip.</p>
+</article>
+
+<article class="fn" id="fn-flash_sector_erase">
+<h4><code>uint32_t flash_sector_erase(uint32_t addr)</code></h4>
+<p>Apaga um setor completo da flash. Setores apagados são lidos como <code>0xFF</code>. Use <code>flash_sector_limits()</code> para saber os limites do setor que será apagado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>addr</code></td><td>Qualquer endereço par contido no setor a apagar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o endereço do setor seguinte ao apagado em caso de sucesso; 0 em caso de erro.</p>
+<p class="note">ATENÇÃO: se <code>addr</code> não for par, a função pode travar a máquina. Deve ser chamada com interrupções desabilitadas e o Z80 parado.</p>
+</article>
+
+<article class="fn" id="fn-flash_program">
+<h4><code>uint16_t flash_program(uint32_t addr, const uint8_t *data, uint16_t len)</code></h4>
+<p>Programa (grava) um buffer de dados no endereço de flash especificado. A faixa de endereços de destino precisa ter sido apagada previamente.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>addr</code></td><td>Endereço de destino da gravação.</td></tr>
+<tr><td><code>data</code></td><td>Buffer com os dados a gravar.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento do buffer de dados a escrever.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número de bytes gravados em caso de sucesso; 0 em caso de erro.</p>
+<p class="note">ATENÇÃO: se a faixa de destino não estiver apagada, se <code>addr</code> não for par, se <code>data</code> não estiver alinhado a word ou se <code>data</code> não estiver na work RAM, a função pode travar a máquina. Se <code>len</code> for ímpar, o último byte não é gravado. Deve ser chamada com interrupções desabilitadas e o Z80 parado.</p>
+</article>
+
+<article class="fn" id="fn-flash_read">
+<h4><code>int16_t flash_read(uint32_t addr, uint8_t *data, uint16_t len)</code></h4>
+<p>Lê dados a partir do endereço de flash especificado, copiando-os para o buffer.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>addr</code></td><td>Endereço de origem da leitura.</td></tr>
+<tr><td><code>data</code></td><td>Buffer de destino dos dados lidos.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento do bloco de dados a ler.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número de bytes lidos.</p>
+<p class="note"><code>addr</code> deve ser par e <code>data</code> deve estar alinhado a word. Se <code>len</code> for ímpar, o último byte não é lido.</p>
+</article>
+
+<article class="fn" id="fn-flash_copy">
+<h4><code>int16_t flash_copy(uint32_t dst, uint32_t src, uint16_t len)</code></h4>
+<p>Copia dados de uma região da flash para outra região também na flash.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>dst</code></td><td>Endereço de destino da cópia.</td></tr>
+<tr><td><code>src</code></td><td>Endereço de origem da cópia.</td></tr>
+<tr><td><code>len</code></td><td>Comprimento do bloco de dados a copiar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número de bytes copiados.</p>
+<p class="note"><code>dst</code> e <code>src</code> devem ser pares; se <code>len</code> for ímpar, o último byte não é copiado. A região de destino deve estar apagada, caso contrário a função pode travar a máquina. Deve ser chamada com interrupções desabilitadas e o Z80 parado.</p>
+</article>
+
+<article class="fn" id="fn-flash_sector_limits">
+<h4><code>int16_t flash_sector_limits(uint32_t addr, uint32_t *start, uint32_t *next)</code></h4>
+<p>Obtém os limites do setor (início do setor e início do setor seguinte) correspondente ao endereço especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>addr</code></td><td>Endereço correspondente ao setor sobre o qual se quer informação.</td></tr>
+<tr><td><code>start</code></td><td>[saída] Endereço inicial do setor. Pode ser NULL se não for necessário.</td></tr>
+<tr><td><code>next</code></td><td>[saída] Endereço inicial do setor seguinte ao atual. Pode ser NULL se não for necessário.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 em caso de sucesso; -1 se o endereço de entrada não cabe no chip.</p>
+</article>
+</section>
+<section class="module" id="mod-saveman">
+<h2>saveman.h <span class="subtitle">Gerenciador de saves em flash</span></h2>
+<p class="mod-desc">Gerenciador de saves (save manager) de Jesus Alonso (doragasu) para chips flash suportados pelo módulo <code>flash.h</code>. Permite salvar dados não voláteis na própria flash do cartucho — a solução ideal para cartuchos sem SRAM/EEPROM. Suporta quantos slots de save forem necessários, cada um com comprimento arbitrário de dados (ex.: slot 0 para configuração do jogo, slot 1 para recordes e slots 2 a 4 para partidas salvas). Cada gravação em um slot substitui o conteúdo anterior. O módulo usa dois setores da flash para implementar wear leveling e gravação segura: o save não é perdido mesmo se houver corte de energia durante a operação.</p>
+<p class="mod-desc">Os flashcarts típicos (como o Flash Kit Cart do Krikzz) usam setores de 64 KiB no fim da flash, então por padrão o módulo ocupa os 128 KiB superiores do espaço de ROM — se código/dados do jogo caírem nessa área, serão apagados! Há como usar setores de 8 KiB (gastando 16 KiB em vez de 128 KiB), mas é mais delicado; o layout padrão reduz o desgaste e permite saves maiores. Todos os slots (mais os cabeçalhos internos) devem caber em um único setor. Os dois setores usados são os indicados pela faixa de memória declarada no cabeçalho da ROM no offset <code>0x1B4</code>. Uso típico: <code>sm_init()</code> → <code>sm_load()</code> / <code>sm_save()</code> / <code>sm_delete()</code> → <code>sm_clear()</code> para reset de fábrica. Exceto <code>sm_load()</code>, todas as funções param o Z80 e desabilitam interrupções até retornarem — garanta que não há música/som tocando ao chamá-las. Buffers de save/load devem estar alinhados a word (use <code>__attribute__((aligned(2)))</code> em arrays de char), senão ocorre <code>SM_STAT_INVALID_PARAM_ERR</code>.</p>
+
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-sm_status">
+<h4><code>enum (códigos de status SM_STAT_*)</code></h4>
+<p>Enum anônimo com os códigos de status retornados pelas funções do módulo.</p>
+<pre class="code">enum {
+    SM_STAT_PARAM_ERR    = -3, // parâmetro inválido na chamada
+    SM_STAT_HW_ERR       = -2, // erro de hardware do chip flash
+    SM_STAT_ERR          = -1, // erro genérico
+    SM_STAT_OK           =  0, // sucesso
+    SM_STAT_WARN_NO_DATA =  1, // sucesso, mas o chip não tem dados salvos
+};</pre>
+</article>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-sm_init">
+<h4><code>int16_t sm_init(uint8_t num_slots)</code></h4>
+<p>Inicializa o módulo gerenciador de saves. Deve ser chamada uma vez, antes de qualquer outra função do módulo, e sempre com os mesmos parâmetros. Chama <code>flash_init()</code> internamente — não a chame por conta própria.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>num_slots</code></td><td>Número de slots de save a suportar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>SM_STAT_OK</code> se a inicialização teve sucesso e há dados para carregar; <code>SM_STAT_WARN_NO_DATA</code> se teve sucesso mas não há dados salvos; <code>SM_STAT_PARAM_ERR</code> se os parâmetros são inválidos; <code>SM_STAT_HW_ERR</code> se o chip flash falhou em alguma operação; <code>SM_STAT_ERR</code> (SM_ERR) para outro erro irrecuperável.</p>
+<p class="note">Para o Z80 e desabilita interrupções até terminar. Usa os dois setores adjacentes na faixa de memória especificada no cabeçalho da ROM no offset <code>0x1B4</code>; se a faixa não casar exatamente com dois setores adjacentes da flash, retorna <code>SM_STAT_PARAM_ERR</code>. ATENÇÃO: os dois setores usados não podem conter código — não faça seu jogo apagar a si mesmo!</p>
+</article>
+
+<article class="fn" id="fn-sm_deinit">
+<h4><code>void sm_deinit(void)</code></h4>
+<p>Desinicializa o módulo gerenciador de saves. Normalmente não é necessário usá-la.</p>
+</article>
+
+<article class="fn" id="fn-sm_load">
+<h4><code>int16_t sm_load(uint8_t slot, void *save_data, uint16_t len)</code></h4>
+<p>Carrega os dados previamente salvos no slot especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot do qual carregar os dados.</td></tr>
+<tr><td><code>save_data</code></td><td>[saída] Buffer para o qual os dados carregados serão copiados (alinhado a word).</td></tr>
+<tr><td><code>len</code></td><td>Comprimento dos dados a carregar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> um número positivo com o comprimento dos dados carregados, ou um código de erro negativo: <code>SM_STAT_PARAM_ERR</code> (parâmetro inválido) ou <code>SM_STAT_ERR</code> (o slot não tem dados disponíveis).</p>
+<p class="note">Os bytes lidos podem ser menos que <code>len</code> em caso de erro (ex.: 0 se o slot está vazio, ou menos que <code>len</code> se foi salvo menos dado do que o solicitado).</p>
+</article>
+
+<article class="fn" id="fn-sm_save">
+<h4><code>int16_t sm_save(uint8_t slot, const void *save_data, uint16_t len)</code></h4>
+<p>Salva dados no slot especificado, substituindo o conteúdo anterior do slot.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot no qual salvar os dados.</td></tr>
+<tr><td><code>save_data</code></td><td>Buffer de dados a salvar no slot (alinhado a word).</td></tr>
+<tr><td><code>len</code></td><td>Comprimento dos dados a salvar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>SM_STAT_OK</code> (sucesso), <code>SM_STAT_PARAM_ERR</code> (parâmetro inválido), <code>SM_STAT_HW_ERR</code> (falha por erro da flash) ou <code>SM_STAT_ERR</code> (outro erro irrecuperável).</p>
+<p class="note">Para o Z80 e desabilita interrupções até terminar. Se alguma gravação retornar <code>SM_STAT_HW_ERR</code>, algo estranho aconteceu: o melhor é reiniciar o console, ou ao menos desinicializar e reinicializar o módulo para que a rotina de init tente corrigir o problema e evitar mais perda de dados.</p>
+</article>
+
+<article class="fn" id="fn-sm_delete">
+<h4><code>int16_t sm_delete(uint8_t slot)</code></h4>
+<p>Apaga os dados do slot especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>slot</code></td><td>Slot a apagar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>SM_STAT_OK</code> (sucesso), <code>SM_STAT_PARAM_ERR</code> (parâmetro inválido), <code>SM_STAT_HW_ERR</code> (falha por erro da flash) ou <code>SM_STAT_ERR</code> (outro erro irrecuperável).</p>
+<p class="note">Para o Z80 e desabilita interrupções até terminar.</p>
+</article>
+
+<article class="fn" id="fn-sm_clear">
+<h4><code>int16_t sm_clear(uint8_t num_slots)</code></h4>
+<p>Apaga todos os dados de todos os slots de save (reset de fábrica) e reinicializa o módulo para suportar o número de slots solicitado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>num_slots</code></td><td>Número de slots a suportar após a limpeza.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>SM_STAT_OK</code> (limpeza bem-sucedida) ou <code>SM_STAT_HW_ERR</code> (o chip flash falhou ao apagar).</p>
+<p class="note">Para o Z80 e desabilita interrupções até terminar.</p>
+</article>
+</section>
+
+<section class="module" id="mod-minimus">
+<h2>minimus.h <span class="subtitle">Driver de som MiniMusic</span></h2>
+<p class="mod-desc">Interface do driver de som MiniMusic para o Z80: um driver alternativo e minimalista aos drivers de som padrão do SGDK. O programa do driver (blob binário) é carregado na RAM do Z80 com <code>minimusic_init()</code>, e a comunicação com o 68000 é feita por comandos de 1 byte (<code>minimusic_sendcmd()</code>) e leitura de status (<code>minimusic_get_status()</code>). O header também fornece macros/funções inline de sincronização com o Z80 via bus request (endereço <code>0xA11100</code>), usadas para acessar com segurança a memória compartilhada. Use este módulo quando quiser tocar música/efeitos com o driver MiniMusic em vez dos drivers nativos do SGDK.</p>
+
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>MINIMUSIC_STATUS_BGM</code></td><td><code>0x01</code></td><td>Bit do byte de status que indica que uma música de fundo (BGM) está tocando.</td></tr>
+</table>
+</div>
+
+<h3>Funções</h3>
+
+<article class="fn" id="fn-MINIMUSIC_MEMORY_BARRIER">
+<h4><code>MINIMUSIC_MEMORY_BARRIER()</code></h4>
+<p>Macro funcional que insere uma barreira de memória do compilador (<code>asm volatile ("" : : : "memory")</code>), impedindo que o compilador reordene acessos à memória ao redor dela. Usada internamente pelas funções de guarda do Z80.</p>
+</article>
+
+<article class="fn" id="fn-MINIMUSIC_Z80_GUARD_BEGIN">
+<h4><code>static inline void MINIMUSIC_Z80_GUARD_BEGIN()</code></h4>
+<p>Inicia uma seção crítica de acesso ao barramento do Z80: escreve <code>0x100</code> no registrador de bus request (<code>0xA11100</code>), solicitando o barramento e pausando o Z80, com barreiras de memória antes e depois. Chame antes de acessar a RAM do Z80 diretamente.</p>
+</article>
+
+<article class="fn" id="fn-MINIMUSIC_Z80_GUARD_END">
+<h4><code>static inline void MINIMUSIC_Z80_GUARD_END()</code></h4>
+<p>Encerra a seção crítica: escreve <code>0x000</code> no registrador de bus request (<code>0xA11100</code>), devolvendo o barramento e retomando a execução do Z80, com barreiras de memória antes e depois.</p>
+</article>
+
+<article class="fn" id="fn-minimusic_init">
+<h4><code>void minimusic_init(const void *blob, uint16_t size)</code></h4>
+<p>Inicializa o driver MiniMusic, carregando o programa do driver (e os dados de som) na RAM do Z80 e iniciando sua execução.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>blob</code></td><td>Ponteiro para o binário do driver/dados a copiar para a RAM do Z80 (parâmetro sem nome no protótipo original).</td></tr>
+<tr><td><code>size</code></td><td>Tamanho em bytes do binário a carregar (parâmetro sem nome no protótipo original).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-minimusic_sendcmd">
+<h4><code>void minimusic_sendcmd(uint8_t cmd)</code></h4>
+<p>Envia um comando de 1 byte ao driver MiniMusic em execução no Z80 (ex.: tocar música, tocar efeito sonoro, parar), conforme o protocolo de comandos do driver.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>cmd</code></td><td>Código do comando a enviar ao driver (parâmetro sem nome no protótipo original).</td></tr></table>
+</article>
+
+<article class="fn" id="fn-minimusic_get_status">
+<h4><code>uint8_t minimusic_get_status(void)</code></h4>
+<p>Lê o byte de status do driver MiniMusic.</p>
+<p class="returns"><strong>Retorna:</strong> o byte de status do driver; teste o bit <code>MINIMUSIC_STATUS_BGM</code> para saber se há música de fundo tocando.</p>
+</article>
+</section>

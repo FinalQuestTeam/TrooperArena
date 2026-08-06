@@ -1,0 +1,450 @@
+<section class="module" id="mod-maths">
+<h2>maths.h <span class="subtitle">Matemática básica e ponto fixo (fixed-point)</span></h2>
+<p class="mod-desc">Este módulo fornece os métodos matemáticos fundamentais do SGDK: operações inteiras otimizadas (multiplicação, divisão e módulo usando diretamente as instruções <code>mulu/muls/divu/divs</code> do 68000), rotação de bits, conversão para BCD, logaritmos, raiz quadrada, trigonometria e utilitários vetoriais 2D. É a base de praticamente qualquer cálculo de movimento, física ou geometria em um jogo de Mega Drive.</p>
+<p class="mod-desc">O conceito central do módulo é a aritmética de <strong>ponto fixo</strong> (fixed-point). O Motorola 68000 <strong>não possui FPU</strong> (unidade de ponto flutuante): usar <code>float</code> ou <code>double</code> obriga o compilador a emular tudo por software, o que é proibitivamente lento em um console de 7,6&nbsp;MHz. A solução clássica é armazenar números fracionários dentro de inteiros comuns, reservando alguns bits para a parte inteira e outros para a parte fracionária (o "ponto binário" fica implícito em uma posição fixa — daí o nome). Somar e subtrair valores de ponto fixo é idêntico a somar inteiros (use os operadores <code>+</code> e <code>-</code> normalmente); multiplicação e divisão exigem um ajuste de escala, feito pelas funções <code>*_mul</code> / <code>*_div</code>.</p>
+<p class="mod-desc">O SGDK define quatro formatos, cada um com um compromisso diferente entre alcance e precisão:<br>
+- <code>fix16</code> (16 bits, formato 10.6): 10 bits inteiros e 6 fracionários — alcance aproximado [-512..512[ com precisão de 1/64 (~0,016). É o tipo recomendado para a maioria dos cálculos (posições, velocidades, ângulos).<br>
+- <code>fix32</code> (32 bits, formato 22.10): 22 bits inteiros e 10 fracionários — grande alcance com precisão de 1/1024, útil para acumuladores de posição; cuidado com overflow em multiplicações.<br>
+- <code>fastfix16</code> (16 bits, formato 8.8): 8 bits inteiros e 8 fracionários — alcance [-128..128[ com precisão de 1/256.<br>
+- <code>fastfix32</code> (32 bits, formato 16.16): 16 bits inteiros e 16 fracionários — precisão de 1/65536.<br>
+Os formatos "fast" alinham a divisão inteiro/fração em fronteira de byte ou word, o que torna conversões e certos acessos mais rápidos no 68000 (basta manipular bytes/words em vez de deslocar bits). Prefira <code>fix16</code>/<code>fastfix16</code> para multiplicar e dividir: os tipos de 32 bits transbordam (overflow) com facilidade nessas operações.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>PI</code></td><td><code>3.14159265358979323846</code></td><td>Número PI (definido apenas se ainda não existir).</td></tr>
+<tr><td><code>FIX16_INT_BITS</code> / <code>FIX16_FRAC_BITS</code></td><td><code>10</code> / <code>6</code></td><td>Quantidade de bits inteiros e fracionários do formato fix16 (10.6).</td></tr>
+<tr><td><code>FIX16_INT_MASK</code> / <code>FIX16_FRAC_MASK</code></td><td>máscaras de bits</td><td>Máscaras para isolar a parte inteira e a parte fracionária de um fix16.</td></tr>
+<tr><td><code>FIX32_INT_BITS</code> / <code>FIX32_FRAC_BITS</code></td><td><code>22</code> / <code>10</code></td><td>Quantidade de bits inteiros e fracionários do formato fix32 (22.10).</td></tr>
+<tr><td><code>FIX32_INT_MASK</code> / <code>FIX32_FRAC_MASK</code></td><td>máscaras de bits</td><td>Máscaras para isolar a parte inteira e a parte fracionária de um fix32.</td></tr>
+<tr><td><code>FASTFIX16_INT_BITS</code> / <code>FASTFIX16_FRAC_BITS</code></td><td><code>8</code> / <code>8</code></td><td>Quantidade de bits inteiros e fracionários do formato fastfix16 (8.8).</td></tr>
+<tr><td><code>FASTFIX16_INT_MASK</code> / <code>FASTFIX16_FRAC_MASK</code></td><td>máscaras de bits</td><td>Máscaras para isolar a parte inteira e a parte fracionária de um fastfix16.</td></tr>
+<tr><td><code>FASTFIX32_INT_BITS</code> / <code>FASTFIX32_FRAC_BITS</code></td><td><code>16</code> / <code>16</code></td><td>Quantidade de bits inteiros e fracionários do formato fastfix32 (16.16).</td></tr>
+<tr><td><code>FASTFIX32_INT_MASK</code> / <code>FASTFIX32_FRAC_MASK</code></td><td>máscaras de bits</td><td>Máscaras para isolar a parte inteira e a parte fracionária de um fastfix32.</td></tr>
+<tr><td><code>F16_PI</code></td><td><code>F16(PI)</code></td><td>PI em formato fix16.</td></tr>
+<tr><td><code>F16_RAD_TO_DEG</code></td><td><code>F16(57.29577951308232)</code></td><td>Fator de conversão radiano → grau em fix16 (180/PI).</td></tr>
+<tr><td><code>F32_PI</code></td><td><code>F32(PI)</code></td><td>PI em formato fix32.</td></tr>
+<tr><td><code>trigtab_f16[91]</code></td><td>tabela extern (<code>const fix16</code>)</td><td>Tabela de senos pré-calculada em passos de 1° usada pelas funções trigonométricas fix16.</td></tr>
+<tr><td><code>trigtab_f32[361]</code></td><td>tabela extern (<code>const fix32</code>)</td><td>Tabela de senos pré-calculada em passos de 0,25° usada pelas funções trigonométricas fix32.</td></tr>
+<tr><td><code>log2tab_f16[0x10000]</code> / <code>log10tab_f16[0x10000]</code> / <code>sqrttab_f16[0x10000]</code></td><td>tabelas extern (<code>const fix16</code>)</td><td>Tabelas de consulta (lookup) para log2, log10 e raiz quadrada em fix16.</td></tr>
+<tr><td><code>distance_approx(dx, dy)</code>, <code>getApproximatedLog2(v)</code>, <code>getLog2Int(v)</code>, <code>getApproximatedDistanceV(dx, dy)</code></td><td>erro de compilação</td><td>Macros descontinuadas: geram erro do GCC indicando o substituto (<code>getApproximatedDistance</code>, <code>FF32_getLog2Fast</code>, <code>getLog2</code>, <code>V2D_S32_getApproximatedDistance</code>).</td></tr>
+<tr><td><code>intToFix16</code>, <code>fix16ToInt</code>, <code>fix16ToFix32</code>, <code>fix16Frac</code>, <code>fix16Int</code>, <code>fix16Round</code>, <code>fix16ToRoundedInt</code>, <code>fix16Add</code>, <code>fix16Sub</code>, <code>fix16Neg</code>, <code>fix16Mul</code>, <code>fix16Div</code>, <code>fix16Avg</code>, <code>fix16Log2</code>, <code>fix16Log10</code>, <code>fix16Sqrt</code></td><td>erro de compilação</td><td>Antiga API fix16 descontinuada: cada macro gera erro do GCC apontando o substituto moderno (<code>FIX16()</code>, <code>F16_*()</code> ou operadores <code>+</code>/<code>-</code> nativos).</td></tr>
+<tr><td><code>intToFix32</code>, <code>fix32ToInt</code>, <code>fix32ToFix16</code>, <code>fix32Frac</code>, <code>fix32Int</code>, <code>fix32Round</code>, <code>fix32ToRoundedInt</code>, <code>fix32Add</code>, <code>fix32Sub</code>, <code>fix32Neg</code>, <code>fix32Mul</code>, <code>fix32Div</code>, <code>fix32Avg</code></td><td>erro de compilação</td><td>Antiga API fix32 descontinuada: cada macro gera erro do GCC apontando o substituto moderno (<code>FIX32()</code>, <code>F32_*()</code> ou operadores nativos).</td></tr>
+<tr><td><code>intToFastFix16</code>, <code>fastFix16ToInt</code>, <code>fastFix16Frac</code>, <code>fastFix16Int</code>, <code>fastFix16Round</code>, <code>fastFix16ToRoundedInt</code>, <code>fastFix16Mul</code>, <code>fastFix16Div</code></td><td>erro de compilação</td><td>Antiga API fastfix16 descontinuada: gera erro do GCC apontando <code>FASTFIX16()</code> / <code>FF16_*()</code>.</td></tr>
+<tr><td><code>intToFastFix32</code>, <code>fastFix32ToInt</code>, <code>fastFix32Frac</code>, <code>fastFix32Int</code>, <code>fastFix32Round</code>, <code>fastFix32ToRoundedInt</code>, <code>fastFix32Mul</code>, <code>fastFix32Div</code></td><td>erro de compilação</td><td>Antiga API fastfix32 descontinuada: gera erro do GCC apontando <code>FASTFIX32()</code> / <code>FF32_*()</code>.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-Vect2D_u16"><h4><code>Vect2D_u16</code></h4><p>Vetor 2D com componentes <code>u16</code> (inteiro sem sinal de 16 bits).</p><pre class="code">typedef struct {
+    u16 x;    // componente X
+    u16 y;    // componente Y
+} Vect2D_u16;</pre></article>
+<article class="type" id="type-Vect2D_s16"><h4><code>Vect2D_s16</code></h4><p>Vetor 2D com componentes <code>s16</code> (inteiro com sinal de 16 bits).</p><pre class="code">typedef struct {
+    s16 x;    // componente X
+    s16 y;    // componente Y
+} Vect2D_s16;</pre></article>
+<article class="type" id="type-Vect2D_u32"><h4><code>Vect2D_u32</code></h4><p>Vetor 2D com componentes <code>u32</code> (inteiro sem sinal de 32 bits).</p><pre class="code">typedef struct {
+    u32 x;    // componente X
+    u32 y;    // componente Y
+} Vect2D_u32;</pre></article>
+<article class="type" id="type-Vect2D_s32"><h4><code>Vect2D_s32</code></h4><p>Vetor 2D com componentes <code>s32</code> (inteiro com sinal de 32 bits).</p><pre class="code">typedef struct {
+    s32 x;    // componente X
+    s32 y;    // componente Y
+} Vect2D_s32;</pre></article>
+<article class="type" id="type-Vect2D_f16"><h4><code>Vect2D_f16</code></h4><p>Vetor 2D com componentes em ponto fixo <code>fix16</code>.</p><pre class="code">typedef struct {
+    fix16 x;    // componente X (fix16)
+    fix16 y;    // componente Y (fix16)
+} Vect2D_f16;</pre></article>
+<article class="type" id="type-Vect2D_f32"><h4><code>Vect2D_f32</code></h4><p>Vetor 2D com componentes em ponto fixo <code>fix32</code>.</p><pre class="code">typedef struct {
+    fix32 x;    // componente X (fix32)
+    fix32 y;    // componente Y (fix32)
+} Vect2D_f32;</pre></article>
+<article class="type" id="type-Vect2D_ff16"><h4><code>Vect2D_ff16</code></h4><p>Vetor 2D com componentes em ponto fixo rápido <code>fastfix16</code>.</p><pre class="code">typedef struct {
+    fastfix16 x;    // componente X (fastfix16)
+    fastfix16 y;    // componente Y (fastfix16)
+} Vect2D_ff16;</pre></article>
+<article class="type" id="type-Vect2D_ff32"><h4><code>Vect2D_ff32</code></h4><p>Vetor 2D com componentes em ponto fixo rápido <code>fastfix32</code>.</p><pre class="code">typedef struct {
+    fastfix32 x;    // componente X (fastfix32)
+    fastfix32 y;    // componente Y (fastfix32)
+} Vect2D_ff32;</pre></article>
+<article class="type" id="type-Mat2D_f16"><h4><code>Mat2D_f16</code></h4><p>Matriz 2x2 em <code>fix16</code>. Internamente composta por 2 vetores 2D (linhas).</p><pre class="code">typedef struct {
+    Vect2D_f16 a;    // primeira linha da matriz
+    Vect2D_f16 b;    // segunda linha da matriz
+} Mat2D_f16;</pre></article>
+<article class="type" id="type-Mat2D_f32"><h4><code>Mat2D_f32</code></h4><p>Matriz 2x2 em <code>fix32</code>. Internamente composta por 2 vetores 2D (linhas).</p><pre class="code">typedef struct {
+    Vect2D_f32 a;    // primeira linha da matriz
+    Vect2D_f32 b;    // segunda linha da matriz
+} Mat2D_f32;</pre></article>
+<article class="type" id="type-Mat2D_ff16"><h4><code>Mat2D_ff16</code></h4><p>Matriz 2x2 em <code>fastfix16</code>. Internamente composta por 2 vetores 2D (linhas).</p><pre class="code">typedef struct {
+    Vect2D_ff16 a;    // primeira linha da matriz
+    Vect2D_ff16 b;    // segunda linha da matriz
+} Mat2D_ff16;</pre></article>
+<article class="type" id="type-Mat2D_ff32"><h4><code>Mat2D_ff32</code></h4><p>Matriz 2x2 em <code>fastfix32</code>. Internamente composta por 2 vetores 2D (linhas).</p><pre class="code">typedef struct {
+    Vect2D_ff32 a;    // primeira linha da matriz
+    Vect2D_ff32 b;    // segunda linha da matriz
+} Mat2D_ff32;</pre></article>
+<article class="type" id="type-V2u16"><h4><code>V2u16, V2s16, V2u32, V2s32, V2f16, V2f32, V2ff16, V2ff32, M2f16, M2f32, M2ff16, M2ff32</code></h4><p>Aliases curtos (apelidos de tipo) para as estruturas de vetor e matriz 2D. Cada alias corresponde diretamente ao tipo longo equivalente.</p><pre class="code">typedef Vect2D_u16  V2u16;    // alias de Vect2D_u16
+typedef Vect2D_s16  V2s16;    // alias de Vect2D_s16
+typedef Vect2D_u32  V2u32;    // alias de Vect2D_u32
+typedef Vect2D_s32  V2s32;    // alias de Vect2D_s32
+typedef Vect2D_f16  V2f16;    // alias de Vect2D_f16
+typedef Vect2D_f32  V2f32;    // alias de Vect2D_f32
+typedef Vect2D_ff16 V2ff16;   // alias de Vect2D_ff16
+typedef Vect2D_ff32 V2ff32;   // alias de Vect2D_ff32
+typedef Mat2D_f16   M2f16;    // alias de Mat2D_f16
+typedef Mat2D_f32   M2f32;    // alias de Mat2D_f32
+typedef Mat2D_ff16  M2ff16;   // alias de Mat2D_ff16
+typedef Mat2D_ff32  M2ff32;   // alias de Mat2D_ff32</pre></article>
+</div>
+<h3>Funções e macros funcionais</h3>
+<article class="fn" id="fn-min"><h4><code>min(X, Y)</code></h4><p>Macro que retorna o menor valor entre <code>X</code> e <code>Y</code>. Funciona com qualquer tipo numérico comparável.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>X</code></td><td>Primeiro valor.</td></tr><tr><td><code>Y</code></td><td>Segundo valor.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o menor dos dois valores.</p>
+<p class="note">Como toda macro, os argumentos podem ser avaliados mais de uma vez — evite expressões com efeitos colaterais (ex.: <code>min(i++, j)</code>).</p></article>
+<article class="fn" id="fn-max"><h4><code>max(X, Y)</code></h4><p>Macro que retorna o maior valor entre <code>X</code> e <code>Y</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>X</code></td><td>Primeiro valor.</td></tr><tr><td><code>Y</code></td><td>Segundo valor.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o maior dos dois valores.</p>
+<p class="note">Evite argumentos com efeitos colaterais (dupla avaliação).</p></article>
+<article class="fn" id="fn-clamp"><h4><code>clamp(X, L, H)</code></h4><p>Macro que limita <code>X</code> ao intervalo [<code>L</code>..<code>H</code>]: retorna <code>L</code> se <code>X &lt; L</code>, <code>H</code> se <code>X &gt; H</code>, ou o próprio <code>X</code> caso esteja dentro do intervalo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>X</code></td><td>Valor a limitar.</td></tr><tr><td><code>L</code></td><td>Limite inferior.</td></tr><tr><td><code>H</code></td><td>Limite superior.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor limitado ao intervalo [L..H].</p></article>
+<article class="fn" id="fn-abs"><h4><code>abs(X)</code></h4><p>Macro que retorna o valor absoluto de <code>X</code>. Definida apenas quando <code>ENABLE_NEWLIB == 0</code> (caso contrário vale a versão da newlib).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>X</code></td><td>Valor de entrada.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> <code>-X</code> se <code>X</code> for negativo, senão <code>X</code>.</p></article>
+<article class="fn" id="fn-FIX16"><h4><code>FIX16(value)&nbsp;·&nbsp;FIX32(value)&nbsp;·&nbsp;FASTFIX16(value)&nbsp;·&nbsp;FASTFIX32(value)</code></h4><p>Família de macros de conversão de um literal numérico (inteiro ou decimal) para o formato de ponto fixo correspondente: <code>FIX16(v)</code> → <code>fix16</code>, <code>FIX32(v)</code> → <code>fix32</code>, <code>FASTFIX16(v)</code> → <code>fastfix16</code>, <code>FASTFIX32(v)</code> → <code>fastfix32</code>. A conversão é feita multiplicando o valor por <code>1 &lt;&lt; *_FRAC_BITS</code>. Ex.: <code>f16 v = FIX16(-27.12);</code>, <code>f32 w = FIX32(34.567);</code></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor numérico (pode ser fracionário) a converter para ponto fixo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor codificado no tipo de ponto fixo correspondente.</p>
+<p class="note">Use preferencialmente com constantes em tempo de compilação: com literais o compilador resolve tudo sem custo em tempo de execução.</p></article>
+<article class="fn" id="fn-F16"><h4><code>F16(value)&nbsp;·&nbsp;F32(value)&nbsp;·&nbsp;FF16(value)&nbsp;·&nbsp;FF32(value)</code></h4><p>Versões curtas das macros de conversão para ponto fixo: <code>F16</code> equivale a <code>FIX16</code>, <code>F32</code> a <code>FIX32</code>, <code>FF16</code> a <code>FASTFIX16</code> e <code>FF32</code> a <code>FASTFIX32</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor numérico a converter para ponto fixo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor codificado no tipo de ponto fixo correspondente.</p></article>
+<article class="fn" id="fn-rol8"><h4><code>u8 rol8(u8 value, u16 number)&nbsp;·&nbsp;u16 rol16(u16 value, u16 number)&nbsp;·&nbsp;u32 rol32(u32 value, u16 number)</code></h4><p>Família de funções de rotação de bits à esquerda (instrução <code>ROL</code> do 68000) para valores de 8, 16 e 32 bits. Os bits que "saem" pela esquerda reentram pela direita.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor ao qual aplicar a rotação de bits.</td></tr><tr><td><code>number</code></td><td>Número de posições a rotacionar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor rotacionado à esquerda.</p></article>
+<article class="fn" id="fn-ror8"><h4><code>u8 ror8(u8 value, u16 number)&nbsp;·&nbsp;u16 ror16(u16 value, u16 number)&nbsp;·&nbsp;u32 ror32(u32 value, u16 number)</code></h4><p>Família de funções de rotação de bits à direita (instrução <code>ROR</code> do 68000) para valores de 8, 16 e 32 bits. Os bits que "saem" pela direita reentram pela esquerda.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor ao qual aplicar a rotação de bits.</td></tr><tr><td><code>number</code></td><td>Número de posições a rotacionar.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor rotacionado à direita.</p></article>
+<article class="fn" id="fn-mulu"><h4><code>u32 mulu(u16 op1, u16 op2)</code></h4><p>Multiplicação sem sinal 16x16=32. Força o GCC a usar a instrução nativa <em>mulu</em> do 68000, evitando a rotina genérica de multiplicação de 32 bits (bem mais lenta).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>op1</code></td><td>Primeiro operando (16 bits sem sinal).</td></tr><tr><td><code>op2</code></td><td>Segundo operando (16 bits sem sinal).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> resultado de 32 bits (sem sinal) da multiplicação.</p></article>
+<article class="fn" id="fn-muls"><h4><code>s32 muls(s16 op1, s16 op2)</code></h4><p>Multiplicação com sinal 16x16=32. Força o GCC a usar a instrução nativa <em>muls</em> do 68000.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>op1</code></td><td>Primeiro operando (16 bits com sinal).</td></tr><tr><td><code>op2</code></td><td>Segundo operando (16 bits com sinal).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> resultado de 32 bits (com sinal) da multiplicação.</p></article>
+<article class="fn" id="fn-divu"><h4><code>u16 divu(u32 op1, u16 op2)</code></h4><p>Acesso direto à instrução <em>divu</em> do 68000 (divisão sem sinal 32/16=16:16) via assembly inline, calculando <code>op1 / op2</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>op1</code></td><td>Primeiro operando — dividendo (32 bits).</td></tr><tr><td><code>op2</code></td><td>Segundo operando — divisor (16 bits).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> quociente de 16 bits (sem sinal) da divisão.</p>
+<p class="note">O quociente deve caber em 16 bits; caso contrário o resultado é indefinido (comportamento da instrução do 68000).</p></article>
+<article class="fn" id="fn-divs"><h4><code>s16 divs(s32 op1, s16 op2)</code></h4><p>Acesso direto à instrução <em>divs</em> do 68000 (divisão com sinal 32/16=16:16) via assembly inline, calculando <code>op1 / op2</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>op1</code></td><td>Primeiro operando — dividendo (32 bits).</td></tr><tr><td><code>op2</code></td><td>Segundo operando — divisor (16 bits).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> quociente de 16 bits (com sinal) da divisão.</p></article>
+<article class="fn" id="fn-modu"><h4><code>u16 modu(u32 op1, u16 op2)</code></h4><p>Usa a instrução <em>divu</em> do 68000 via assembly inline para obter o resto (módulo) da divisão sem sinal <code>op1 % op2</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>op1</code></td><td>Primeiro operando — dividendo (32 bits).</td></tr><tr><td><code>op2</code></td><td>Segundo operando — divisor (16 bits).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> resto de 16 bits (sem sinal) da divisão.</p></article>
+<article class="fn" id="fn-mods"><h4><code>s16 mods(s32 op1, s16 op2)</code></h4><p>Usa a instrução <em>divs</em> do 68000 via assembly inline para obter o resto (módulo) da divisão com sinal <code>op1 % op2</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>op1</code></td><td>Primeiro operando — dividendo (32 bits).</td></tr><tr><td><code>op2</code></td><td>Segundo operando — divisor (16 bits).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> resto de 16 bits (com sinal) da divisão.</p></article>
+<article class="fn" id="fn-divmodu"><h4><code>u32 divmodu(u32 op1, u16 op2)</code></h4><p>Usa a instrução <em>divu</em> do 68000 via assembly inline para calcular <code>op1 / op2</code> e <code>op1 % op2</code> em uma única operação — a instrução de divisão do 68000 já produz os dois resultados de graça.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>op1</code></td><td>Primeiro operando — dividendo (32 bits).</td></tr><tr><td><code>op2</code></td><td>Segundo operando — divisor (16 bits).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> quociente de 16 bits (sem sinal) nos bits baixos (0-15) e resto de 16 bits (sem sinal) nos bits altos (16-31).</p></article>
+<article class="fn" id="fn-divmods"><h4><code>s32 divmods(s32 op1, s16 op2)</code></h4><p>Usa a instrução <em>divs</em> do 68000 via assembly inline para calcular <code>op1 / op2</code> e <code>op1 % op2</code> em uma única operação (versão com sinal).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>op1</code></td><td>Primeiro operando — dividendo (32 bits).</td></tr><tr><td><code>op2</code></td><td>Segundo operando — divisor (16 bits).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> quociente de 16 bits (com sinal) nos bits baixos (0-15) e resto de 16 bits (com sinal) nos bits altos (16-31).</p></article>
+<article class="fn" id="fn-u16ToBCD"><h4><code>u32 u16ToBCD(u16 value)</code></h4><p>Converte um valor <code>u16</code> para BCD (Binary Coded Decimal), formato em que cada dígito decimal ocupa 4 bits — útil para exibir placares e contadores sem divisões custosas.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor u16 a converter.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor codificado em BCD (u32).</p></article>
+<article class="fn" id="fn-u32ToBCD"><h4><code>u32 u32ToBCD(u32 value)</code></h4><p>Converte um valor <code>u32</code> para BCD (Binary Coded Decimal).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor u32 a converter.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor codificado em BCD (u32).</p></article>
+<article class="fn" id="fn-getNextPow2"><h4><code>u32 getNextPow2(u32 value)</code></h4><p>Retorna a próxima potência de 2 maior que o valor de 32 bits sem sinal especificado. Ex.: <code>getNextPow2(700) = 1024</code>, <code>getNextPow2(18) = 32</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor de referência.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a menor potência de 2 maior que <code>value</code>.</p></article>
+<article class="fn" id="fn-getLog2"><h4><code>u16 getLog2(u32 value)</code></h4><p>Retorna o log2 inteiro do valor de 32 bits sem sinal especificado. Ex.: <code>getLog2(1024) = 10</code>, <code>getLog2(12345) = 13</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor do qual obter o log2.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o log2 inteiro (arredondado) de <code>value</code>.</p></article>
+<article class="fn" id="fn-getApproximatedDistance"><h4><code>u32 getApproximatedDistance(s32 dx, s32 dy)</code></h4><p>Retorna uma aproximação da distância euclidiana do vetor (dx, dy). O resultado não é 100% exato, mas o cálculo é rápido (evita raiz quadrada).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>dx</code></td><td>Delta X.</td></tr><tr><td><code>dy</code></td><td>Delta Y.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> distância euclidiana aproximada.</p></article>
+<article class="fn" id="fn-getApproximatedDistanceV"><h4><code>u32 getApproximatedDistanceV(V2s32* v)</code></h4><p>Retorna uma aproximação da distância euclidiana do vetor 2D especificado. O resultado não é 100% exato, mas o cálculo é rápido.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>v</code></td><td>Vetor 2D (ponteiro para <code>V2s32</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> distância euclidiana aproximada.</p>
+<p class="note">Nas versões recentes do SGDK prefira <code>V2D_S32_getApproximatedDistance(..)</code> (existe uma macro descontinuada de mesmo nome que gera erro de compilação quando usada com dois escalares).</p></article>
+<article class="fn" id="fn-F16_toInt"><h4><code>s16 F16_toInt(fix16 value)&nbsp;·&nbsp;s32 F32_toInt(fix32 value)&nbsp;·&nbsp;s16 FF16_toInt(fastfix16 value)&nbsp;·&nbsp;s16 FF32_toInt(fastfix32 value)</code></h4><p>Família de conversão de ponto fixo para inteiro: descarta a parte fracionária (truncamento) e devolve a parte inteira do valor. Uma variante para cada formato: fix16, fix32, fastfix16 e fastfix32.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor em ponto fixo a converter.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a parte inteira do valor (s16 ou s32 conforme a variante).</p>
+<p class="note">Para converter arredondando ao inteiro mais próximo, use a família <code>*_toRoundedInt</code>.</p></article>
+<article class="fn" id="fn-F16_toFix32"><h4><code>fix32 F16_toFix32(fix16 value)&nbsp;·&nbsp;fastfix16 F16_toFastFix16(fix16 value)&nbsp;·&nbsp;fastfix32 F16_toFastFix32(fix16 value)&nbsp;·&nbsp;fix16 F32_toFix16(fix32 value)&nbsp;·&nbsp;fastfix16 F32_toFastFix16(fix32 value)&nbsp;·&nbsp;fastfix32 F32_toFastFix32(fix32 value)&nbsp;·&nbsp;fix16 FF16_toFix16(fastfix16 value)&nbsp;·&nbsp;fix32 FF16_toFix32(fastfix16 value)&nbsp;·&nbsp;fastfix32 FF16_toFastFix32(fastfix16 value)&nbsp;·&nbsp;fix16 FF32_toFix16(fastfix32 value)&nbsp;·&nbsp;fix32 FF32_toFix32(fastfix32 value)&nbsp;·&nbsp;fastfix16 FF32_toFastFix16(fastfix32 value)&nbsp;·&nbsp;fastfix32 FF32_fromInt(s16 value)</code></h4><p>Família de conversão entre os formatos de ponto fixo. Cada função reescala o valor do formato de origem (prefixo: <code>F16_</code> = fix16, <code>F32_</code> = fix32, <code>FF16_</code> = fastfix16, <code>FF32_</code> = fastfix32) para o formato de destino indicado no nome, ajustando a posição do ponto binário. <code>FF32_fromInt</code> converte um inteiro <code>s16</code> diretamente para fastfix32.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor no formato de origem (ou inteiro <code>s16</code> no caso de <code>FF32_fromInt</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor equivalente no formato de destino.</p>
+<p class="note">Ao converter para um formato com menos bits fracionários há perda de precisão; para um formato com menos bits inteiros pode haver overflow se o valor não couber no alcance do destino.</p></article>
+<article class="fn" id="fn-F16_frac"><h4><code>fix16 F16_frac(fix16 value)&nbsp;·&nbsp;fix32 F32_frac(fix32 value)&nbsp;·&nbsp;fastfix16 FF16_frac(fastfix16 value)&nbsp;·&nbsp;fastfix32 FF32_frac(fastfix32 value)</code></h4><p>Família que retorna apenas a parte fracionária do valor em ponto fixo (o resultado permanece no mesmo formato de ponto fixo).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor em ponto fixo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a parte fracionária do valor, no mesmo formato.</p></article>
+<article class="fn" id="fn-F16_int"><h4><code>fix16 F16_int(fix16 value)&nbsp;·&nbsp;fix32 F32_int(fix32 value)&nbsp;·&nbsp;fastfix16 FF16_int(fastfix16 value)&nbsp;·&nbsp;fastfix32 FF32_int(fastfix32 value)</code></h4><p>Família que retorna apenas a parte inteira do valor, mantendo o resultado no mesmo formato de ponto fixo (a parte fracionária é zerada).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor em ponto fixo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a parte inteira do valor, no mesmo formato de ponto fixo.</p></article>
+<article class="fn" id="fn-F16_abs"><h4><code>fix16 F16_abs(fix16 x)</code></h4><p>Retorna o valor absoluto do valor fix16 especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Valor fix16 de entrada.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> |x| em fix16.</p></article>
+<article class="fn" id="fn-F16_round"><h4><code>fix16 F16_round(fix16 value)&nbsp;·&nbsp;fix32 F32_round(fix32 value)&nbsp;·&nbsp;fastfix16 FF16_round(fastfix16 value)&nbsp;·&nbsp;fastfix32 FF32_round(fastfix32 value)</code></h4><p>Família que arredonda o valor de ponto fixo para o inteiro mais próximo, mantendo o resultado no mesmo formato de ponto fixo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor em ponto fixo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o valor arredondado ao inteiro mais próximo, ainda em ponto fixo.</p></article>
+<article class="fn" id="fn-F16_toRoundedInt"><h4><code>s16 F16_toRoundedInt(fix16 value)&nbsp;·&nbsp;s32 F32_toRoundedInt(fix32 value)&nbsp;·&nbsp;s16 FF16_toRoundedInt(fastfix16 value)&nbsp;·&nbsp;s32 FF32_toRoundedInt(fastfix32 value)</code></h4><p>Família que arredonda o valor de ponto fixo ao inteiro mais próximo e o converte para inteiro nativo em uma única operação.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor em ponto fixo.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o inteiro (s16 ou s32 conforme a variante) mais próximo do valor.</p></article>
+<article class="fn" id="fn-F16_mul"><h4><code>fix16 F16_mul(fix16 val1, fix16 val2)&nbsp;·&nbsp;fix32 F32_mul(fix32 val1, fix32 val2)&nbsp;·&nbsp;fastfix16 FF16_mul(fastfix16 val1, fastfix16 val2)&nbsp;·&nbsp;fastfix32 FF32_mul(fastfix32 val1, fastfix32 val2)</code></h4><p>Família de multiplicação em ponto fixo: calcula e retorna <code>val1 * val2</code> com o reajuste de escala adequado ao formato.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>val1</code></td><td>Primeiro operando.</td></tr><tr><td><code>val2</code></td><td>Segundo operando.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o produto no mesmo formato de ponto fixo.</p>
+<p class="note">ATENÇÃO: nas variantes de 32 bits (<code>F32_mul</code> e <code>FF32_mul</code>) o resultado transborda (overflow) com facilidade — é recomendado usar o tipo fix16 para operações de multiplicação e divisão.</p></article>
+<article class="fn" id="fn-F16_div"><h4><code>fix16 F16_div(fix16 val1, fix16 val2)&nbsp;·&nbsp;fix32 F32_div(fix32 val1, fix32 val2)&nbsp;·&nbsp;fastfix16 FF16_div(fastfix16 val1, fastfix16 val2)&nbsp;·&nbsp;fastfix32 FF32_div(fastfix32 val1, fastfix32 val2)</code></h4><p>Família de divisão em ponto fixo: calcula e retorna <code>val1 / val2</code> com o reajuste de escala adequado ao formato.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>val1</code></td><td>Dividendo.</td></tr><tr><td><code>val2</code></td><td>Divisor.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o quociente no mesmo formato de ponto fixo.</p>
+<p class="note">ATENÇÃO: nas variantes de 32 bits (<code>F32_div</code> e <code>FF32_div</code>) o resultado transborda (overflow) com facilidade — prefira fix16 para multiplicação e divisão.</p></article>
+<article class="fn" id="fn-F16_avg"><h4><code>fix16 F16_avg(fix16 val1, fix16 val2)&nbsp;·&nbsp;fix32 F32_avg(fix32 val1, fix32 val2)</code></h4><p>Família que calcula e retorna a média aritmética de <code>val1</code> e <code>val2</code> em ponto fixo (variantes fix16 e fix32).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>val1</code></td><td>Primeiro valor.</td></tr><tr><td><code>val2</code></td><td>Segundo valor.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a média (val1 + val2) / 2 no mesmo formato.</p></article>
+<article class="fn" id="fn-F16_log2"><h4><code>fix16 F16_log2(fix16 value)</code></h4><p>Calcula e retorna o logaritmo na base 2 do valor fix16 especificado, usando tabela de consulta pré-calculada (<code>log2tab_f16</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor fix16 (deve ser positivo).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> log2(value) em fix16.</p></article>
+<article class="fn" id="fn-F16_log10"><h4><code>fix16 F16_log10(fix16 value)</code></h4><p>Calcula e retorna o logaritmo na base 10 do valor fix16 especificado, usando tabela de consulta pré-calculada (<code>log10tab_f16</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor fix16 (deve ser positivo).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> log10(value) em fix16.</p></article>
+<article class="fn" id="fn-F16_sqrt"><h4><code>fix16 F16_sqrt(fix16 value)</code></h4><p>Calcula e retorna a raiz quadrada do valor fix16 especificado, usando tabela de consulta pré-calculada (<code>sqrttab_f16</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor fix16 (deve ser positivo).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a raiz quadrada de <code>value</code> em fix16.</p></article>
+<article class="fn" id="fn-F16_normalizeAngle"><h4><code>fix16 F16_normalizeAngle(fix16 angle)</code></h4><p>Retorna a forma normalizada do ângulo em graus fornecido: o valor de saída é garantidamente contido no intervalo [FIX16(0)..FIX16(360)[.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>angle</code></td><td>Ângulo em graus (fix16), possivelmente fora do intervalo padrão.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o ângulo equivalente no intervalo [0..360[ graus (fix16).</p></article>
+<article class="fn" id="fn-F16_sin"><h4><code>fix16 F16_sin(fix16 angle)&nbsp;·&nbsp;fix32 F32_sin(fix16 angle)</code></h4><p>Calcula o seno do ângulo especificado (em graus, fix16) usando as tabelas trigonométricas pré-calculadas. <code>F16_sin</code> retorna o resultado em fix16 (tabela com passo de 1°); <code>F32_sin</code> retorna em fix32 com maior precisão (tabela com passo de 0,25°).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>angle</code></td><td>Ângulo em graus (fix16).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> sin(angle) em fix16 ou fix32 conforme a variante, no intervalo [-1..1].</p></article>
+<article class="fn" id="fn-F16_cos"><h4><code>fix16 F16_cos(fix16 angle)&nbsp;·&nbsp;fix32 F32_cos(fix16 angle)</code></h4><p>Calcula o cosseno do ângulo especificado (em graus, fix16) usando as tabelas trigonométricas pré-calculadas. <code>F16_cos</code> retorna em fix16; <code>F32_cos</code> retorna em fix32 com maior precisão.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>angle</code></td><td>Ângulo em graus (fix16).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> cos(angle) em fix16 ou fix32 conforme a variante, no intervalo [-1..1].</p></article>
+<article class="fn" id="fn-F16_tan"><h4><code>fix16 F16_tan(fix16 angle)</code></h4><p>Calcula a tangente do ângulo especificado (em graus) e a retorna em fix16.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>angle</code></td><td>Ângulo em graus (fix16).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> tan(angle) em fix16.</p>
+<p class="note">Perto de 90° e 270° a tangente cresce sem limite — o alcance do fix16 satura rapidamente nesses casos.</p></article>
+<article class="fn" id="fn-F16_atan"><h4><code>fix16 F16_atan(fix16 x)</code></h4><p>Calcula o arco-tangente do valor especificado e o retorna em graus (fix16).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Valor de entrada (fix16).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> atan(x) em graus (fix16).</p></article>
+<article class="fn" id="fn-F16_atan2"><h4><code>fix16 F16_atan2(fix16 y, fix16 x)</code></h4><p>Calcula o arco-tangente de y/x levando em conta o quadrante, isto é, retorna o ângulo (em graus) do vetor (0,0)-(x,y).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>y</code></td><td>Componente Y do vetor (fix16).</td></tr><tr><td><code>x</code></td><td>Componente X do vetor (fix16).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o ângulo do vetor em graus (fix16).</p></article>
+<article class="fn" id="fn-sinFix16"><h4><code>fix16 sinFix16(u16 value)&nbsp;·&nbsp;fix32 sinFix32(u16 value)</code></h4><p>DESCONTINUADAS — use <code>F16_sin(..)</code> / <code>F32_sin(..)</code>. Calculam o seno do valor especificado e o retornam em fix16 / fix32. A entrada é um inteiro no intervalo [0..1024] que corresponde ao intervalo em radianos [0..2PI].</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Ângulo como inteiro em [0..1024] mapeando [0..2PI] radianos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o seno em fix16 (<code>sinFix16</code>) ou fix32 (<code>sinFix32</code>).</p>
+<p class="note">Mantidas apenas por compatibilidade com código antigo.</p></article>
+<article class="fn" id="fn-cosFix16"><h4><code>fix16 cosFix16(u16 value)&nbsp;·&nbsp;fix32 cosFix32(u16 value)</code></h4><p>DESCONTINUADAS — use <code>F16_cos(..)</code> / <code>F32_cos(..)</code>. Calculam o cosseno do valor especificado e o retornam em fix16 / fix32. A entrada é um inteiro no intervalo [0..1024] que corresponde ao intervalo em radianos [0..2PI].</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Ângulo como inteiro em [0..1024] mapeando [0..2PI] radianos.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o cosseno em fix16 (<code>cosFix16</code>) ou fix32 (<code>cosFix32</code>).</p>
+<p class="note">Mantidas apenas por compatibilidade com código antigo.</p></article>
+<article class="fn" id="fn-F16_degreeToRadian"><h4><code>fix16 F16_degreeToRadian(fix16 degree)</code></h4><p>Converte um ângulo de graus para radianos (fix16).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>degree</code></td><td>Ângulo em graus (fix16).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o ângulo em radianos (fix16).</p></article>
+<article class="fn" id="fn-F16_radianToDegree"><h4><code>fix16 F16_radianToDegree(fix16 radian)</code></h4><p>Converte um ângulo de radianos para graus (fix16).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>radian</code></td><td>Ângulo em radianos (fix16).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o ângulo em graus (fix16).</p></article>
+<article class="fn" id="fn-F16_getAngle"><h4><code>fix16 F16_getAngle(fix16 x1, fix16 y1, fix16 x2, fix16 y2)</code></h4><p>Calcula e retorna o ângulo, em graus, entre os dois pontos definidos por (x1,y1) e (x2,y2). Útil, por exemplo, para mirar um projétil em direção a um alvo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x1</code></td><td>X do primeiro ponto.</td></tr><tr><td><code>y1</code></td><td>Y do primeiro ponto.</td></tr><tr><td><code>x2</code></td><td>X do segundo ponto.</td></tr><tr><td><code>y2</code></td><td>Y do segundo ponto.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o ângulo em graus (fix16) do vetor que vai do primeiro ao segundo ponto.</p></article>
+<article class="fn" id="fn-F16_computePosition"><h4><code>void F16_computePosition(fix16 *x2, fix16 *y2, fix16 x1, fix16 y1, fix16 ang, fix16 dist)</code></h4><p>Calcula a nova posição do ponto (x1, y1) após movê-lo pela distância <code>dist</code> na direção do ângulo <code>ang</code>, e armazena o resultado em (x2, y2).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x2</code></td><td>Ponteiro de saída: nova posição X.</td></tr><tr><td><code>y2</code></td><td>Ponteiro de saída: nova posição Y.</td></tr><tr><td><code>x1</code></td><td>Posição X atual.</td></tr><tr><td><code>y1</code></td><td>Posição Y atual.</td></tr><tr><td><code>ang</code></td><td>Ângulo em graus (fix16).</td></tr><tr><td><code>dist</code></td><td>Distância a mover (fix16).</td></tr></table></article>
+<article class="fn" id="fn-F16_computePositionEx"><h4><code>void F16_computePositionEx(fix16 *x2, fix16 *y2, fix16 x1, fix16 y1, fix16 ang, fix16 dist, fix16 cosMul, fix16 sinMul)</code></h4><p>Versão estendida de <code>F16_computePosition</code>: calcula a nova posição do ponto (x1, y1) movido pela distância <code>dist</code> na direção do ângulo <code>ang</code>, aplicando fatores multiplicadores independentes ao cosseno e ao seno (útil para escalas diferentes nos eixos, por exemplo movimentos elípticos).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x2</code></td><td>Ponteiro de saída: nova posição X.</td></tr><tr><td><code>y2</code></td><td>Ponteiro de saída: nova posição Y.</td></tr><tr><td><code>x1</code></td><td>Posição X atual.</td></tr><tr><td><code>y1</code></td><td>Posição Y atual.</td></tr><tr><td><code>ang</code></td><td>Ângulo em graus (fix16).</td></tr><tr><td><code>dist</code></td><td>Distância a mover (fix16).</td></tr><tr><td><code>cosMul</code></td><td>Fator multiplicador do cosseno (padrão = FIX16(1)).</td></tr><tr><td><code>sinMul</code></td><td>Fator multiplicador do seno (padrão = FIX16(1)).</td></tr></table></article>
+<article class="fn" id="fn-FF32_getLog2Fast"><h4><code>fastfix32 FF32_getLog2Fast(fastfix32 value)</code></h4><p>Retorna uma <em>aproximação</em> rápida (porém pouco precisa) do log2 do valor fastfix32 especificado. Ex.: <code>FF32_getLog2Fast(FASTFIX32(1)) = 0</code>; <code>FF32_getLog2Fast(12345 &lt;&lt; 16) = ~9.5</code> (valor real ≈ 13,6).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Valor fastfix32 do qual obter o log2.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> aproximação do log2 em fastfix32.</p>
+<p class="note">Use somente quando a velocidade importar mais que a exatidão; para log2 preciso em fix16 use <code>F16_log2</code>.</p></article>
+<article class="fn" id="fn-V2D_F16_getAngle"><h4><code>fix16 V2D_F16_getAngle(V2f16* pt1, V2f16* pt2)</code></h4><p>Calcula e retorna o ângulo em graus (fix16) entre os dois pontos <code>pt1</code> e <code>pt2</code>. Versão vetorial de <code>F16_getAngle</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pt1</code></td><td>Primeiro ponto (ponteiro para <code>V2f16</code>).</td></tr><tr><td><code>pt2</code></td><td>Segundo ponto (ponteiro para <code>V2f16</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o ângulo em graus (fix16).</p></article>
+<article class="fn" id="fn-V2D_F16_computePosition"><h4><code>void V2D_F16_computePosition(V2f16* pt, fix16 ang, fix16 dist)</code></h4><p>Calcula a nova posição do ponto <code>pt</code> movendo-o pela distância <code>dist</code> na direção do ângulo <code>ang</code>. O ponto é atualizado no próprio local (in place).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pt</code></td><td>Ponto a mover (ponteiro para <code>V2f16</code>).</td></tr><tr><td><code>ang</code></td><td>Ângulo em graus (fix16).</td></tr><tr><td><code>dist</code></td><td>Distância a mover (fix16).</td></tr></table></article>
+<article class="fn" id="fn-V2D_F16_computePositionEx"><h4><code>void V2D_F16_computePositionEx(V2f16* pt, fix16 ang, fix16 dist, fix16 cosMul, fix16 sinMul)</code></h4><p>Versão estendida de <code>V2D_F16_computePosition</code>: move o ponto <code>pt</code> pela distância <code>dist</code> na direção do ângulo <code>ang</code>, aplicando fatores multiplicadores independentes ao cosseno e ao seno.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pt</code></td><td>Ponto a mover (ponteiro para <code>V2f16</code>).</td></tr><tr><td><code>ang</code></td><td>Ângulo em graus (fix16).</td></tr><tr><td><code>dist</code></td><td>Distância a mover (fix16).</td></tr><tr><td><code>cosMul</code></td><td>Fator multiplicador do cosseno (padrão = FIX16(1)).</td></tr><tr><td><code>sinMul</code></td><td>Fator multiplicador do seno (padrão = FIX16(1)).</td></tr></table></article>
+<article class="fn" id="fn-V2D_S32_getApproximatedDistance"><h4><code>u32 V2D_S32_getApproximatedDistance(V2s32* v)</code></h4><p>Retorna uma aproximação da distância euclidiana (magnitude) do vetor 2D especificado. O resultado não é 100% exato, mas o cálculo é rápido pois evita raiz quadrada.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>v</code></td><td>Vetor 2D (ponteiro para <code>V2s32</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> distância euclidiana aproximada (u32).</p></article>
+</section>
+<section class="module" id="mod-maths3d">
+<h2>maths3D.h <span class="subtitle">Motor de matemática 3D</span></h2>
+<p class="mod-desc">Este módulo implementa um pequeno motor de transformação 3D em ponto fixo (fix16) para o Mega Drive. Ele oferece translação nos eixos X/Y/Z, rotação X/Y/Z, uma luz direcional e projeção 2D em perspectiva. Segundo o autor, consegue transformar (incluindo a projeção 2D) cerca de ~10000 vértices por segundo no 68000. Use-o para efeitos 3D em wireframe ou flat-shading, tipicamente em conjunto com o motor de bitmap por software do SGDK (<code>bmp.h</code>).</p>
+<p class="mod-desc">O fluxo típico é: configurar o contexto global (<code>M3D_reset</code>, <code>M3D_setViewport</code>, <code>M3D_setCamDistance</code>, luz), preparar um objeto <code>Transformation3D</code> com referências de translação/rotação (<code>M3D_setTransform</code>), reconstruir a matriz quando os ângulos mudarem (<code>M3D_buildMat3D</code>), transformar os vértices (<code>M3D_transform</code>) e projetá-los em 2D (<code>M3D_project_s16</code> ou <code>M3D_project_f16</code>).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td colspan="3">Este header não define constantes nem macros públicas — apenas tipos e funções.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-Vect3D_u16"><h4><code>Vect3D_u16</code></h4><p>Vetor 3D com componentes <code>u16</code> (inteiro sem sinal de 16 bits).</p><pre class="code">typedef struct {
+    u16 x;    // componente X
+    u16 y;    // componente Y
+    u16 z;    // componente Z
+} Vect3D_u16;</pre></article>
+<article class="type" id="type-Vect3D_s16"><h4><code>Vect3D_s16</code></h4><p>Vetor 3D com componentes <code>s16</code> (inteiro com sinal de 16 bits).</p><pre class="code">typedef struct {
+    s16 x;    // componente X
+    s16 y;    // componente Y
+    s16 z;    // componente Z
+} Vect3D_s16;</pre></article>
+<article class="type" id="type-Vect3D_u32"><h4><code>Vect3D_u32</code></h4><p>Vetor 3D com componentes <code>u32</code> (inteiro sem sinal de 32 bits).</p><pre class="code">typedef struct {
+    u32 x;    // componente X
+    u32 y;    // componente Y
+    u32 z;    // componente Z
+} Vect3D_u32;</pre></article>
+<article class="type" id="type-Vect3D_s32"><h4><code>Vect3D_s32</code></h4><p>Vetor 3D com componentes <code>s32</code> (inteiro com sinal de 32 bits).</p><pre class="code">typedef struct {
+    s32 x;    // componente X
+    s32 y;    // componente Y
+    s32 z;    // componente Z
+} Vect3D_s32;</pre></article>
+<article class="type" id="type-Vect3D_f16"><h4><code>Vect3D_f16</code></h4><p>Vetor 3D com componentes em ponto fixo <code>fix16</code>. É o tipo de vértice usado pelo motor 3D.</p><pre class="code">typedef struct {
+    fix16 x;    // componente X (fix16)
+    fix16 y;    // componente Y (fix16)
+    fix16 z;    // componente Z (fix16)
+} Vect3D_f16;</pre></article>
+<article class="type" id="type-Vect3D_f32"><h4><code>Vect3D_f32</code></h4><p>Vetor 3D com componentes em ponto fixo <code>fix32</code>.</p><pre class="code">typedef struct {
+    fix32 x;    // componente X (fix32)
+    fix32 y;    // componente Y (fix32)
+    fix32 z;    // componente Z (fix32)
+} Vect3D_f32;</pre></article>
+<article class="type" id="type-Mat3D_f16"><h4><code>Mat3D_f16</code></h4><p>Matriz 3x3 em <code>fix16</code>. Internamente composta por 3 vetores 3D (linhas). Usada nas rotações do motor 3D.</p><pre class="code">typedef struct {
+    Vect3D_f16 a;    // primeira linha da matriz
+    Vect3D_f16 b;    // segunda linha da matriz
+    Vect3D_f16 c;    // terceira linha da matriz
+} Mat3D_f16;</pre></article>
+<article class="type" id="type-Mat3D_f32"><h4><code>Mat3D_f32</code></h4><p>Matriz 3x3 em <code>fix32</code>. Internamente composta por 3 vetores 3D (linhas).</p><pre class="code">typedef struct {
+    Vect3D_f32 a;    // primeira linha da matriz
+    Vect3D_f32 b;    // segunda linha da matriz
+    Vect3D_f32 c;    // terceira linha da matriz
+} Mat3D_f32;</pre></article>
+<article class="type" id="type-Vect4D_f16"><h4><code>Vect4D_f16</code></h4><p>Vetor 4D com componentes em ponto fixo <code>fix16</code> (coordenadas homogêneas x, y, z, w).</p><pre class="code">typedef struct {
+    fix16 x;    // componente X (fix16)
+    fix16 y;    // componente Y (fix16)
+    fix16 z;    // componente Z (fix16)
+    fix16 w;    // componente W (fix16)
+} Vect4D_f16;</pre></article>
+<article class="type" id="type-Vect4D_f32"><h4><code>Vect4D_f32</code></h4><p>Vetor 4D com componentes em ponto fixo <code>fix32</code> (coordenadas homogêneas x, y, z, w).</p><pre class="code">typedef struct {
+    fix32 x;    // componente X (fix32)
+    fix32 y;    // componente Y (fix32)
+    fix32 z;    // componente Z (fix32)
+    fix32 w;    // componente W (fix32)
+} Vect4D_f32;</pre></article>
+<article class="type" id="type-Mat4D_f16"><h4><code>Mat4D_f16</code></h4><p>Matriz 4x4 em <code>fix16</code>. Internamente composta por 4 vetores 4D (linhas).</p><pre class="code">typedef struct {
+    Vect4D_f16 a;    // primeira linha da matriz
+    Vect4D_f16 b;    // segunda linha da matriz
+    Vect4D_f16 c;    // terceira linha da matriz
+    Vect4D_f16 d;    // quarta linha da matriz
+} Mat4D_f16;</pre></article>
+<article class="type" id="type-Mat4D_f32"><h4><code>Mat4D_f32</code></h4><p>Matriz 4x4 em <code>fix32</code>. Internamente composta por 4 vetores 4D (linhas).</p><pre class="code">typedef struct {
+    Vect4D_f32 a;    // primeira linha da matriz
+    Vect4D_f32 b;    // segunda linha da matriz
+    Vect4D_f32 c;    // terceira linha da matriz
+    Vect4D_f32 d;    // quarta linha da matriz
+} Mat4D_f32;</pre></article>
+<article class="type" id="type-V3u16"><h4><code>V3u16, V3s16, V3u32, V3s32, V3f16, V3f32, V4f16, V4f32, M3f16, M3f32, M4f16, M4f32</code></h4><p>Aliases curtos (apelidos de tipo) para as estruturas de vetor e matriz 3D/4D.</p><pre class="code">typedef Vect3D_u16 V3u16;    // alias de Vect3D_u16
+typedef Vect3D_s16 V3s16;    // alias de Vect3D_s16
+typedef Vect3D_u32 V3u32;    // alias de Vect3D_u32
+typedef Vect3D_s32 V3s32;    // alias de Vect3D_s32
+typedef Vect3D_f16 V3f16;    // alias de Vect3D_f16
+typedef Vect3D_f32 V3f32;    // alias de Vect3D_f32
+typedef Vect4D_f16 V4f16;    // alias de Vect4D_f16
+typedef Vect4D_f32 V4f32;    // alias de Vect4D_f32
+typedef Mat3D_f16  M3f16;    // alias de Mat3D_f16
+typedef Mat3D_f32  M3f32;    // alias de Mat3D_f32
+typedef Mat4D_f16  M4f16;    // alias de Mat4D_f16
+typedef Mat4D_f32  M4f32;    // alias de Mat4D_f32</pre></article>
+<article class="type" id="type-Context3D"><h4><code>Context3D</code></h4><p>Estrutura que guarda as configurações / o contexto global do motor de transformação 3D (viewport, distância da câmera e luz direcional).</p><pre class="code">typedef struct {
+    V2u16 viewport;      // dimensões do viewport (largura x altura)
+    fix16 camDist;       // distância entre a câmera e a cena
+    V3f16 light;         // vetor de direção da luz
+    u16 lightEnabled;    // flag: cálculo de luz habilitado (1) ou não (0)
+} Context3D;</pre></article>
+<article class="type" id="type-Translation3D"><h4><code>Translation3D</code></h4><p>Objeto com as informações de translação 3D — tipo f16 (fix16). É um alias de <code>V3f16</code> em que x, y e z representam o deslocamento em cada eixo.</p><pre class="code">typedef V3f16 Translation3D;    // deslocamento (x, y, z) em fix16</pre></article>
+<article class="type" id="type-Rotation3D"><h4><code>Rotation3D</code></h4><p>Objeto com as informações de rotação 3D — os ângulos são armazenados em graus, tipo f16 (fix16). É um alias de <code>V3f16</code> em que x, y e z representam o ângulo de rotação em torno de cada eixo.</p><pre class="code">typedef V3f16 Rotation3D;    // ângulos (x, y, z) em graus, fix16</pre></article>
+<article class="type" id="type-Transformation3D"><h4><code>Transformation3D</code></h4><p>Objeto de transformação 3D — tipo f16 (fix16). Define as informações globais de transformação e os dados em cache associados (matriz, matriz inversa, câmera e luz no espaço do objeto). Se a informação de rotação for modificada, a flag <code>rebuildMat</code> deve ser colocada em 1. Os objetos de rotação e translação são mantidos por referência — não esqueça de defini-los (via <code>M3D_setTransform</code>).</p><pre class="code">typedef struct {
+    u16 rebuildMat;              // flag: 1 = matriz precisa ser reconstruída
+    Translation3D* translation;  // referência para o objeto de translação
+    Rotation3D* rotation;        // referência para o objeto de rotação
+    M3f16 mat;                   // matriz de transformação (cache)
+    M3f16 matInv;                // matriz inversa (cache)
+    V3f16 cameraInv;             // posição da câmera no espaço do objeto (cache)
+    V3f16 lightInv;              // direção da luz no espaço do objeto (cache)
+} Transformation3D;</pre></article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-M3D_reset"><h4><code>void M3D_reset(void)</code></h4><p>Reinicializa o motor de matemática 3D (principalmente as matrizes e os parâmetros de transformação do contexto global). Chame antes de começar a usar o motor.</p></article>
+<article class="fn" id="fn-M3D_setLightEnabled"><h4><code>void M3D_setLightEnabled(u16 enabled)</code></h4><p>Habilita ou desabilita o cálculo de transformação da luz direcional.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>enabled</code></td><td>Diferente de zero para habilitar o cálculo de luz; 0 para desabilitar.</td></tr></table></article>
+<article class="fn" id="fn-M3D_getLightEnabled"><h4><code>u16 M3D_getLightEnabled(void)</code></h4><p>Obtém o estado da flag de cálculo de transformação da luz.</p>
+<p class="returns"><strong>Retorna:</strong> valor diferente de zero se o cálculo de luz estiver habilitado, 0 caso contrário.</p></article>
+<article class="fn" id="fn-M3D_setViewport"><h4><code>void M3D_setViewport(u16 w, u16 h)</code></h4><p>Define as dimensões do viewport (área de projeção 2D).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>w</code></td><td>Largura do viewport (use <code>BMP_WIDTH</code> se estiver usando o 3D com o motor de bitmap por software).</td></tr><tr><td><code>h</code></td><td>Altura do viewport (use <code>BMP_HEIGHT</code> se estiver usando o 3D com o motor de bitmap por software).</td></tr></table></article>
+<article class="fn" id="fn-M3D_setCamDistance"><h4><code>void M3D_setCamDistance(fix16 value)</code></h4><p>Define a distância entre a câmera e a cena, que controla o efeito de perspectiva da projeção 2D.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Distância câmera-cena (fix16).</td></tr></table></article>
+<article class="fn" id="fn-M3D_setLightXYZ"><h4><code>void M3D_setLightXYZ(fix16 x, fix16 y, fix16 z)</code></h4><p>Define o vetor de direção da luz a partir dos componentes individuais.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Componente X da direção da luz (fix16).</td></tr><tr><td><code>y</code></td><td>Componente Y da direção da luz (fix16).</td></tr><tr><td><code>z</code></td><td>Componente Z da direção da luz (fix16).</td></tr></table></article>
+<article class="fn" id="fn-M3D_setLight"><h4><code>void M3D_setLight(V3f16* value)</code></h4><p>Define o vetor de direção da luz a partir de um vetor 3D.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>Ponteiro para o vetor de direção da luz (<code>V3f16</code>).</td></tr></table></article>
+<article class="fn" id="fn-M3D_resetTransform"><h4><code>void M3D_resetTransform(Transformation3D* t)</code></h4><p>Reinicializa o objeto <code>Transformation3D</code> especificado (zera parâmetros e marca os caches para reconstrução).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto <code>Transformation3D</code> a reinicializar.</td></tr></table></article>
+<article class="fn" id="fn-M3D_setTransform"><h4><code>void M3D_setTransform(Transformation3D* tr, Translation3D* t, Rotation3D *r)</code></h4><p>Associa os objetos de translação e rotação (por referência) ao objeto de transformação especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>tr</code></td><td>Objeto de transformação de destino.</td></tr><tr><td><code>t</code></td><td>Objeto de translação a associar.</td></tr><tr><td><code>r</code></td><td>Objeto de rotação a associar.</td></tr></table>
+<p class="note">A transformação guarda apenas as referências: manter os objetos de translação/rotação vivos é responsabilidade do chamador.</p></article>
+<article class="fn" id="fn-M3D_setTranslation"><h4><code>void M3D_setTranslation(Transformation3D* t, fix16 x, fix16 y, fix16 z)</code></h4><p>Define os parâmetros de translação do objeto de transformação especificado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto de transformação.</td></tr><tr><td><code>x</code></td><td>Deslocamento no eixo X (fix16).</td></tr><tr><td><code>y</code></td><td>Deslocamento no eixo Y (fix16).</td></tr><tr><td><code>z</code></td><td>Deslocamento no eixo Z (fix16).</td></tr></table></article>
+<article class="fn" id="fn-M3D_setRotation"><h4><code>void M3D_setRotation(Transformation3D* t, fix16 x, fix16 y, fix16 z)</code></h4><p>Define os parâmetros de rotação do objeto <code>Transformation3D</code> especificado. Os ângulos x, y e z são dados em graus (fix16).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto de transformação.</td></tr><tr><td><code>x</code></td><td>Ângulo de rotação em torno do eixo X, em graus (fix16).</td></tr><tr><td><code>y</code></td><td>Ângulo de rotação em torno do eixo Y, em graus (fix16).</td></tr><tr><td><code>z</code></td><td>Ângulo de rotação em torno do eixo Z, em graus (fix16).</td></tr></table>
+<p class="note">Alterar a rotação implica reconstruir a matriz (flag <code>rebuildMat</code> / <code>M3D_buildMat3D</code>).</p></article>
+<article class="fn" id="fn-M3D_combineTransform"><h4><code>void M3D_combineTransform(Transformation3D* left, Transformation3D* right, Transformation3D* result)</code></h4><p>Combina os objetos <code>Transformation3D</code> esquerdo e direito especificados e armazena o resultado em <code>result</code> (composição de transformações, útil para hierarquias de objetos).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>left</code></td><td>Objeto <code>Transformation3D</code> esquerdo.</td></tr><tr><td><code>right</code></td><td>Objeto <code>Transformation3D</code> direito.</td></tr><tr><td><code>result</code></td><td>Objeto <code>Transformation3D</code> de resultado.</td></tr></table>
+<p class="note"><code>result</code> NÃO pode ser o mesmo objeto que <code>left</code> ou <code>right</code>.</p></article>
+<article class="fn" id="fn-M3D_combineTranslationLeft"><h4><code>void M3D_combineTranslationLeft(Translation3D* left, Transformation3D* right, Transformation3D* result)</code></h4><p>Combina a <code>Translation3D</code> esquerda com a <code>Transformation3D</code> direita e armazena o resultado em <code>result</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>left</code></td><td>Objeto <code>Translation3D</code> esquerdo.</td></tr><tr><td><code>right</code></td><td>Objeto <code>Transformation3D</code> direito.</td></tr><tr><td><code>result</code></td><td>Objeto <code>Transformation3D</code> de resultado.</td></tr></table>
+<p class="note"><code>right</code> e <code>result</code> podem ser o mesmo objeto.</p></article>
+<article class="fn" id="fn-M3D_combineTranslationRight"><h4><code>void M3D_combineTranslationRight(Transformation3D* left, Translation3D* right, Transformation3D* result)</code></h4><p>Combina a <code>Transformation3D</code> esquerda com a <code>Translation3D</code> direita e armazena o resultado em <code>result</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>left</code></td><td>Objeto <code>Transformation3D</code> esquerdo.</td></tr><tr><td><code>right</code></td><td>Objeto <code>Translation3D</code> direito.</td></tr><tr><td><code>result</code></td><td>Objeto <code>Transformation3D</code> de resultado.</td></tr></table>
+<p class="note"><code>left</code> e <code>result</code> podem ser o mesmo objeto.</p></article>
+<article class="fn" id="fn-M3D_buildMat3D"><h4><code>void M3D_buildMat3D(Transformation3D* t)</code></h4><p>Constrói a matriz de transformação do objeto <code>Transformation3D</code> especificado. Também reconstrói as informações em cache, como a matriz de transformação inversa, a visão inversa da câmera etc.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto <code>Transformation3D</code>.</td></tr></table></article>
+<article class="fn" id="fn-M3D_buildMat3DOnly"><h4><code>void M3D_buildMat3DOnly(Transformation3D* t)</code></h4><p>Constrói somente a matriz de transformação do objeto especificado (mais rápido): as informações em cache, como a matriz inversa, não são reconstruídas.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto de transformação.</td></tr></table></article>
+<article class="fn" id="fn-M3D_buildMat3DExtras"><h4><code>void M3D_buildMat3DExtras(Transformation3D* t)</code></h4><p>Reconstrói apenas as informações em cache (matriz inversa, visão inversa da câmera etc.), sem recalcular a matriz principal.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto de transformação.</td></tr></table></article>
+<article class="fn" id="fn-M3D_translate"><h4><code>void M3D_translate(Transformation3D* t, V3f16* vertices, u16 numv)</code></h4><p>Aplica somente a translação 3D ao buffer de vértices 3D especificado (os vértices são modificados no próprio buffer).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto de transformação contendo o parâmetro de translação.</td></tr><tr><td><code>vertices</code></td><td>Buffer de vértices 3D a transladar.</td></tr><tr><td><code>numv</code></td><td>Número de vértices a transladar.</td></tr></table></article>
+<article class="fn" id="fn-M3D_rotate"><h4><code>void M3D_rotate(Transformation3D* t, const V3f16* src, V3f16* dest, u16 numv)</code></h4><p>Aplica somente a rotação 3D ao buffer de vértices 3D especificado, gravando o resultado no buffer de destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto de transformação contendo o parâmetro de rotação.</td></tr><tr><td><code>src</code></td><td>Buffer de vértices 3D de origem.</td></tr><tr><td><code>dest</code></td><td>Buffer de vértices 3D de destino.</td></tr><tr><td><code>numv</code></td><td>Número de vértices a rotacionar.</td></tr></table></article>
+<article class="fn" id="fn-M3D_rotateInv"><h4><code>void M3D_rotateInv(Transformation3D* t, const V3f16* src, V3f16* dest)</code></h4><p>Aplica a rotação 3D inversa ao vértice 3D especificado (um único vértice) — útil para levar um ponto do espaço da cena de volta ao espaço do objeto.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto de transformação contendo o parâmetro de rotação.</td></tr><tr><td><code>src</code></td><td>Vértice 3D de origem.</td></tr><tr><td><code>dest</code></td><td>Vértice 3D de destino.</td></tr></table></article>
+<article class="fn" id="fn-M3D_transform"><h4><code>void M3D_transform(Transformation3D* t, const V3f16* src, V3f16* dest, u16 numv)</code></h4><p>Aplica a transformação 3D completa (rotação e translação) ao buffer de vértices 3D especificado, gravando o resultado no buffer de destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>t</code></td><td>Objeto de transformação contendo os parâmetros de rotação e translação.</td></tr><tr><td><code>src</code></td><td>Buffer de vértices 3D de origem.</td></tr><tr><td><code>dest</code></td><td>Buffer de vértices 3D de destino.</td></tr><tr><td><code>numv</code></td><td>Número de vértices a transformar.</td></tr></table></article>
+<article class="fn" id="fn-M3D_project_f16"><h4><code>void M3D_project_f16(const V3f16* src, V2f16* dest, u16 numv)</code></h4><p>Aplica a projeção 2D (perspectiva) ao buffer de vértices 3D especificado — versão com saída em fix16, que preserva a precisão fracionária das coordenadas projetadas.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>src</code></td><td>Buffer de vértices 3D de origem.</td></tr><tr><td><code>dest</code></td><td>Buffer de vértices 2D de destino — formato fix16.</td></tr><tr><td><code>numv</code></td><td>Número de vértices a projetar.</td></tr></table></article>
+<article class="fn" id="fn-M3D_project_s16"><h4><code>void M3D_project_s16(const V3f16* src, V2s16* dest, u16 numv)</code></h4><p>Aplica a projeção 2D (perspectiva) ao buffer de vértices 3D especificado — versão com saída em s16 (coordenadas inteiras de tela, prontas para desenhar).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>src</code></td><td>Buffer de vértices 3D de origem.</td></tr><tr><td><code>dest</code></td><td>Buffer de vértices 2D de destino — formato s16.</td></tr><tr><td><code>numv</code></td><td>Número de vértices a projetar.</td></tr></table></article>
+</section>
+<section class="module" id="mod-tab-cnv">
+<h2>tab_cnv.h <span class="subtitle">Tabelas de conversão pré-calculadas</span></h2>
+<p class="mod-desc">Header interno que expõe tabelas de conversão (lookup tables) pré-calculadas e armazenadas na ROM. Elas permitem "expandir" valores de poucos bits para formatos maiores por simples indexação de tabela — muito mais rápido no 68000 do que calcular a expansão bit a bit. São usadas internamente pelo SGDK, por exemplo, na descompactação/conversão de dados de imagem (expandir pixels de 2 ou 4 bpp para o formato de tile de 4 bits por pixel do VDP) e na conversão rápida para BCD. Em geral você não precisa usá-las diretamente, mas elas estão disponíveis para código de conversão de dados de alta performance.</p>
+<p class="mod-desc">O padrão de nome é <code>cnv_AtoB_tab</code>: converte um valor de A bits no valor equivalente com cada bit replicado/expandido para uma largura de B bits. O índice da tabela é o valor de origem e o conteúdo é o valor expandido.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>cnv_2to4_tab[0x4]</code></td><td>tabela extern (<code>const u8</code>)</td><td>Expansão de valores de 2 bits para 4 bits (4 entradas).</td></tr>
+<tr><td><code>cnv_2to8_tab[0x4]</code></td><td>tabela extern (<code>const u8</code>)</td><td>Expansão de valores de 2 bits para 8 bits (4 entradas).</td></tr>
+<tr><td><code>cnv_2to16_tab[0x4]</code></td><td>tabela extern (<code>const u16</code>)</td><td>Expansão de valores de 2 bits para 16 bits (4 entradas).</td></tr>
+<tr><td><code>cnv_2to32_tab[0x4]</code></td><td>tabela extern (<code>const u32</code>)</td><td>Expansão de valores de 2 bits para 32 bits (4 entradas).</td></tr>
+<tr><td><code>cnv_4to8_tab[0x10]</code></td><td>tabela extern (<code>const u8</code>)</td><td>Expansão de valores de 4 bits para 8 bits (16 entradas).</td></tr>
+<tr><td><code>cnv_4to16_tab[0x10]</code></td><td>tabela extern (<code>const u16</code>)</td><td>Expansão de valores de 4 bits para 16 bits (16 entradas).</td></tr>
+<tr><td><code>cnv_4to32_tab[0x10]</code></td><td>tabela extern (<code>const u32</code>)</td><td>Expansão de valores de 4 bits para 32 bits (16 entradas).</td></tr>
+<tr><td><code>cnv_8to16_tab[0x100]</code></td><td>tabela extern (<code>const u16</code>)</td><td>Expansão de valores de 8 bits para 16 bits (256 entradas).</td></tr>
+<tr><td><code>cnv_8to32_tab[0x100]</code></td><td>tabela extern (<code>const u32</code>)</td><td>Expansão de valores de 8 bits para 32 bits (256 entradas).</td></tr>
+<tr><td><code>cnv_bcd_tab[100]</code></td><td>tabela extern (<code>const u8</code>)</td><td>Tabela de conversão binário → BCD para valores de 0 a 99 (cada entrada contém o par de dígitos decimais codificado em BCD); usada pelas funções <code>u16ToBCD</code>/<code>u32ToBCD</code>.</td></tr>
+</table>
+</div>
+<p class="mod-desc">Este header não declara tipos, funções nem macros funcionais — apenas as tabelas de dados acima.</p>
+</section>

@@ -1,0 +1,1042 @@
+<section class="module" id="mod-sprite-eng">
+<h2>sprite_eng.h <span class="subtitle">Motor de sprites (Sprite Engine)</span></h2>
+<p class="mod-desc">Motor de sprites do SGDK, oferecendo manipulação avançada de sprites (meta-sprites) sobre o hardware do Mega Drive/Genesis. Um "sprite" do motor é uma entidade de alto nível composta por um ou mais sprites de hardware do VDP (cada um de até 4&times;4 tiles), com animações, frames, ordenação por profundidade (depth/Z), flip horizontal/vertical, alocação automática de VRAM e upload automático de tiles via DMA. Este módulo usa o gerenciador de memória de VRAM (vram.h) e as capacidades de sprite do VDP (vdp_spr.h). Use-o sempre que precisar exibir personagens, inimigos, projéteis e demais objetos animados: inicialize com <code>SPR_init()</code>, crie sprites com <code>SPR_addSprite(..)</code>, mova/anime-os e chame <code>SPR_update()</code> uma vez por frame para enviar a lista de sprites ao VDP no V-Int. Esta é a versão atual do motor (usada quando <code>LEGACY_SPRITE_ENGINE</code> não está definido); a alocação de sprites de hardware do VDP é totalmente dinâmica a cada frame.</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>COLLISION_TYPE_NONE</code></td><td><code>0</code></td><td>Sem tipo de colisão.</td></tr>
+<tr><td><code>COLLISION_TYPE_BOX</code></td><td><code>1</code></td><td>Colisão por caixa delimitadora (estrutura <code>BoxCollision</code>).</td></tr>
+<tr><td><code>COLLISION_TYPE_CIRCLE</code></td><td><code>2</code></td><td>Colisão por círculo (estrutura <code>CircleCollision</code>).</td></tr>
+<tr><td><code>SPR_FLAG_INSERT_HEAD</code></td><td><code>0x4000</code></td><td>Insere o sprite na posição 0 (cabeça/topo) da lista em vez de inseri-lo na última posição (padrão). Sprite no topo da lista é desenhado na frente dos demais.</td></tr>
+<tr><td><code>SPR_FLAG_DISABLE_ANIMATION_LOOP</code></td><td><code>0x2000</code></td><td>Desativa o loop automático da animação. Por padrão a animação reinicia após o último frame; com este flag ela permanece no último frame (ver <code>SPR_isAnimationDone(..)</code>).</td></tr>
+<tr><td><code>SPR_FLAG_DISABLE_DELAYED_FRAME_UPDATE</code></td><td><code>0x1000</code></td><td>Desativa o adiamento da atualização de frame quando a capacidade de DMA se esgota. Por padrão, a troca de frame é adiada até haver banda de DMA disponível; com este flag a atualização acontece sempre imediatamente, podendo causar glitches gráficos.</td></tr>
+<tr><td><code>SPR_FLAG_AUTO_VRAM_ALLOC</code></td><td><code>0x0800</code></td><td>Ativa a alocação automática de VRAM para os tiles do sprite.</td></tr>
+<tr><td><code>SPR_FLAG_AUTO_TILE_UPLOAD</code></td><td><code>0x0400</code></td><td>Ativa o upload automático dos dados de tiles do sprite para a VRAM.</td></tr>
+<tr><td><code>SPR_FLAG_AUTO_VISIBILITY</code></td><td><code>0x0200</code></td><td>Ativa o cálculo automático de visibilidade do sprite.</td></tr>
+<tr><td><code>SPR_FLAG_FAST_AUTO_VISIBILITY</code></td><td><code>0x0100</code></td><td>Ativa o cálculo rápido de visibilidade (só faz sentido com <code>SPR_FLAG_AUTO_VISIBILITY</code>): a visibilidade é calculada globalmente para o meta-sprite e não por sprite de hardware individual — mais rápido, porém pode desperdiçar sprites de hardware.</td></tr>
+<tr><td><code>SPR_FLAG_MASK</code></td><td>combinação dos flags acima</td><td>Máscara com todos os flags válidos de sprite (exceto <code>SPR_FLAG_DISABLE_ANIMATION_LOOP</code>).</td></tr>
+<tr><td><code>SPR_MIN_DEPTH</code></td><td><code>-0x8000</code></td><td>Profundidade mínima de um sprite (sempre acima/na frente dos demais).</td></tr>
+<tr><td><code>SPR_MAX_DEPTH</code></td><td><code>0x7FFF</code></td><td>Profundidade máxima de um sprite (sempre abaixo/atrás dos demais).</td></tr>
+</table>
+<h3>Variáveis globais</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>Pool* spritesPool</code></td><td>&mdash;</td><td>Pool de objetos <code>Sprite</code> usado pelo motor.</td></tr>
+<tr><td><code>Sprite* firstSprite</code></td><td>&mdash;</td><td>Primeiro sprite alocado (NULL se nenhum sprite alocado).</td></tr>
+<tr><td><code>Sprite* lastSprite</code></td><td>&mdash;</td><td>Último sprite alocado (NULL se nenhum sprite alocado).</td></tr>
+<tr><td><code>u16 spriteVramSize</code></td><td>&mdash;</td><td>Quantidade de VRAM (em tiles) reservada para o motor de sprites.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-SpriteVisibility">
+<h4><code>SpriteVisibility</code></h4>
+<p>Enumeração dos estados de visibilidade de um sprite.</p>
+<pre class="code">typedef enum
+{
+    VISIBLE,    // sprite visível (nenhum cálculo necessário)
+    HIDDEN,     // sprite oculto (nenhum cálculo necessário)
+    AUTO_FAST,  // visibilidade automática - RÁPIDA (cálculo global no meta-sprite)
+    AUTO_SLOW,  // visibilidade automática - LENTA (cálculo por sprite de hardware)
+} SpriteVisibility;</pre>
+</article>
+<article class="type" id="type-BoxCollision">
+<h4><code>BoxCollision</code></h4>
+<p>Estrutura simples de caixa (box) para detecção de colisão.</p>
+<pre class="code">typedef struct
+{
+    s8 x;   // posição X (borda esquerda)
+    s8 y;   // posição Y (borda superior)
+    u8 w;   // largura
+    u8 h;   // altura
+} BoxCollision;</pre>
+</article>
+<article class="type" id="type-CircleCollision">
+<h4><code>CircleCollision</code></h4>
+<p>Estrutura simples de círculo, utilizável para detecção de colisão.</p>
+<pre class="code">typedef struct
+{
+    s8 x;     // posição X do centro
+    s8 y;     // posição Y do centro
+    u16 ray;  // raio do círculo
+} CircleCollision;</pre>
+</article>
+<article class="type" id="type-Collision">
+<h4><code>Collision</code></h4>
+<p>Definição de colisão com duas zonas: <em>hit</em> (dano recebido) e <em>attack</em> (dano causado, utilizável como hitbox alternativa). Cada zona é uma union entre box e círculo, selecionada pelos campos de tipo (<code>COLLISION_TYPE_BOX</code> ou <code>COLLISION_TYPE_CIRCLE</code>).</p>
+<pre class="code">typedef struct _collision
+{
+    u8 typeHit;      // tipo da colisão de hit (COLLISION_TYPE_BOX ou COLLISION_TYPE_CIRCLE)
+    u8 typeAttack;   // tipo da colisão de attack
+    union {
+        BoxCollision box;        // definição box se tipo = COLLISION_TYPE_BOX
+        CircleCollision circle;  // definição círculo se tipo = COLLISION_TYPE_CIRCLE
+    } hit;
+    union {
+        BoxCollision box;
+        CircleCollision circle;
+    } attack;
+} Collision;</pre>
+</article>
+<article class="type" id="type-FrameVDPSprite">
+<h4><code>FrameVDPSprite</code></h4>
+<p>Informações de um único sprite de hardware (VDP) dentro de um frame de animação. Os offsets posicionam o sprite de hardware em relação à posição global do <code>Sprite</code>; as versões "Flip" são usadas quando o sprite está espelhado.</p>
+<pre class="code">typedef struct
+{
+    u8 offsetY;      // offset Y relativo à posição global do Sprite
+    u8 offsetYFlip;  // offset Y na versão espelhada (flip)
+    u8 size;         // tamanho do sprite VDP (ver macro SPRITE_SIZE)
+    u8 offsetX;      // offset X relativo à posição global do Sprite
+    u8 offsetXFlip;  // offset X na versão espelhada (flip)
+    u8 numTile;      // número de tiles deste sprite VDP (coerente com o campo size)
+} FrameVDPSprite;</pre>
+</article>
+<article class="type" id="type-AnimationFrame">
+<h4><code>AnimationFrame</code></h4>
+<p>Frame de animação de um sprite: agrupa o tileset do frame e a lista de sprites de hardware (VDP) que o compõem.</p>
+<pre class="code">typedef struct
+{
+    s8 numSprite;        // número de sprites VDP do frame; o bit 7 é flag interna do motor,
+                         // use sempre (numSprite &amp; 0x7F) para obter apenas a contagem
+    u8 timer;            // tempo de exibição do frame (em 1/60 de segundo)
+    TileSet* tileset;    // tileset com os tiles deste frame (ordenados para sprite)
+    Collision* collision;// estrutura de colisão (não utilizada atualmente)
+    FrameVDPSprite frameVDPSprites[]; // array de sprites VDP que compõem o frame
+} AnimationFrame;</pre>
+</article>
+<article class="type" id="type-Animation">
+<h4><code>Animation</code></h4>
+<p>Estrutura de uma animação de sprite (sequência de frames).</p>
+<pre class="code">typedef struct
+{
+    u8 numFrame;              // número de frames desta animação (máx. = 255)
+    u8 loop;                  // índice do frame para onde o loop retorna (último índice se sem loop)
+    AnimationFrame** frames;  // frames que compõem a animação
+} Animation;</pre>
+</article>
+<article class="type" id="type-SpriteDefinition">
+<h4><code>SpriteDefinition</code></h4>
+<p>Definição de sprite (recurso gerado normalmente pelo rescomp a partir de uma imagem): contém todas as animações e informações internas de alocação.</p>
+<pre class="code">typedef struct
+{
+    u16 w;                   // largura da célula do frame em pixels
+    u16 h;                   // altura da célula do frame em pixels
+    Palette* palette;        // dados da palette padrão
+    u16 numAnimation;        // número de animações deste sprite
+    Animation** animations;  // definições das animações
+    u16 maxNumTile;          // máx. de tiles usados por um único frame (p/ alocação de VRAM)
+    u16 maxNumSprite;        // máx. de sprites VDP usados por um único frame (p/ alocação de sprites VDP)
+} SpriteDefinition;</pre>
+</article>
+<article class="type" id="type-Sprite">
+<h4><code>Sprite</code></h4>
+<p>Estrutura usada pelo motor para armazenar o estado de um sprite ativo em jogo. <strong>Atenção:</strong> sempre aloque objetos <code>Sprite</code> através de <code>SPR_addSprite(..)</code> (ou variantes), nunca manualmente.</p>
+<pre class="code">typedef struct Sprite
+{
+    u16 status;            // estado interno e informações de alocação automática (interno)
+    u16 visibility;        // visibilidade do frame atual para cada sprite VDP (máx. = 16)
+    const SpriteDefinition* definition; // ponteiro para a definição do sprite
+    void (*onFrameChange)(struct Sprite* sprite); // callback de troca de frame
+    Animation* animation;  // cache do ponteiro da animação atual (interno)
+    AnimationFrame* frame; // cache do ponteiro do frame atual (interno)
+    s16 animInd;           // índice da animação atual (interno)
+    s16 frameInd;          // índice do frame atual (interno)
+    s16 timer;             // timer do frame atual (interno)
+    s16 x;                 // posição X na tela com offset de 0x80 (posição interna do VDP)
+    s16 y;                 // posição Y na tela com offset de 0x80 (posição interna do VDP)
+    s16 depth;             // profundidade (Z) usada na ordenação de exibição
+    u16 attribut;          // atributos do sprite + índice de tile em VRAM (ver TILE_ATTR_FULL())
+    u32 data;              // campo livre para dados do usuário (flags, ponteiro...)
+    struct Sprite* prev;   // sprite anterior na lista
+    struct Sprite* next;   // próximo sprite na lista
+} Sprite;</pre>
+</article>
+<article class="type" id="type-FrameChangeCallback">
+<h4><code>FrameChangeCallback</code></h4>
+<p>Tipo do callback de evento de troca de frame. O evento ocorre durante o processamento de troca de frame na chamada de <code>SPR_update()</code> (cuidado: o campo <code>sprite-&gt;status</code> não está atualizado nesse momento). Permite aplicar comportamento especial quando o frame acabou de mudar — por exemplo, interromper o loop de animação zerando <code>sprite-&gt;timer</code> ao chegar no último frame.</p>
+<pre class="code">typedef void FrameChangeCallback(Sprite* sprite); // sprite: o sprite cujo frame acabou de mudar</pre>
+</article>
+</div>
+<div class="functions">
+<h3>Funções</h3>
+<article class="fn" id="fn-SPR_init">
+<h4><code>void SPR_init(void)</code></h4>
+<p>Inicializa o motor de sprites com os parâmetros padrão (420 tiles reservados em VRAM). Também inicializa o sistema de alocação de sprites de hardware. Deve ser chamada antes de qualquer outra função <code>SPR_*</code>.</p>
+</article>
+<article class="fn" id="fn-SPR_initEx">
+<h4><code>void SPR_initEx(u16 vramSize)</code></h4>
+<p>Inicializa o motor de sprites com parâmetros avançados. Aloca uma região de VRAM para os tiles de sprite e inicializa o sistema de alocação de sprites de hardware.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>vramSize</code></td><td>Tamanho (em tiles) da região de VRAM para a alocação automática de tiles. Se 0, usa o tamanho padrão (420 tiles).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_end">
+<h4><code>void SPR_end(void)</code></h4>
+<p>Encerra o motor de sprites e libera os recursos associados: a região de VRAM alocada e os sprites de hardware.</p>
+</article>
+<article class="fn" id="fn-SPR_isInitialized">
+<h4><code>bool SPR_isInitialized(void)</code></h4>
+<p>Informa se o motor de sprites está inicializado.</p>
+<p class="returns"><strong>Retorna:</strong> FALSE se o motor não está inicializado, TRUE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_reset">
+<h4><code>void SPR_reset(void)</code></h4>
+<p>Reinicializa o motor de sprites: libera todos os sprites alocados e seus recursos (VRAM e sprites de hardware), sem encerrar o motor.</p>
+</article>
+<article class="fn" id="fn-SPR_addSpriteEx">
+<h4><code>Sprite* SPR_addSpriteEx(const SpriteDefinition* spriteDef, s16 x, s16 y, u16 attribut, u16 flag)</code></h4>
+<p>Adiciona um novo sprite com parâmetros específicos e o retorna. O sprite usa a configuração de flags fornecida para alocação automática de recursos e cálculo de visibilidade. Se a visibilidade automática não estiver habilitada, o sprite é considerado não visível por padrão (ver <code>SPR_setVisibility(..)</code>). Libere os recursos com <code>SPR_releaseSprite(..)</code> ou <code>SPR_reset()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir ao sprite.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial.</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos do sprite (ver macro <code>TILE_ATTR()</code>): palette, prioridade, flips e, em alocação manual, índice de tile em VRAM.</td></tr>
+<tr><td><code>flag</code></td><td>Configurações do sprite: <code>SPR_FLAG_DISABLE_DELAYED_FRAME_UPDATE</code> (atualização de frame sempre imediata, pode gerar glitches), <code>SPR_FLAG_AUTO_VISIBILITY</code> (visibilidade automática), <code>SPR_FLAG_FAST_AUTO_VISIBILITY</code> (cálculo rápido, global no meta-sprite), <code>SPR_FLAG_AUTO_VRAM_ALLOC</code> (alocação automática de VRAM; sem ele, defina o índice de tile via <code>attribut</code> ou <code>SPR_setVRAMTileIndex(..)</code>), <code>SPR_FLAG_AUTO_TILE_UPLOAD</code> (upload automático dos tiles; sem ele, faça o upload manualmente), <code>SPR_FLAG_INSERT_HEAD</code> (insere no início da lista, equivalente a <code>SPR_setDepth(SPR_MIN_DEPTH)</code>). Recomenda-se <code>SPR_FLAG_AUTO_VISIBILITY | SPR_FLAG_AUTO_VRAM_ALLOC | SPR_FLAG_AUTO_TILE_UPLOAD</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo sprite, ou <code>NULL</code> se a operação falhou (mensagens podem ser geradas no console KMod).</p>
+<p class="note">Importante: com alocação automática de VRAM a criação pode falhar (retornar NULL) mesmo havendo VRAM suficiente, por causa da fragmentação. Use <code>SPR_addSpriteExSafe(..)</code> para tratar a fragmentação automaticamente.</p>
+</article>
+<article class="fn" id="fn-SPR_addSprite">
+<h4><code>Sprite* SPR_addSprite(const SpriteDefinition* spriteDef, s16 x, s16 y, u16 attribut)</code></h4>
+<p>Adiciona um novo sprite com alocação automática de recursos habilitada (VRAM e sprite de hardware) e visibilidade ligada. Os padrões podem ser alterados depois com <code>SPR_setVRAMTileIndex(..)</code>, <code>SPR_setAutoTileUpload(..)</code> e <code>SPR_setVisibility(..)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir ao sprite.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial.</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos do sprite (ver macro <code>TILE_ATTR()</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo sprite, ou <code>NULL</code> se a operação falhou (mensagens podem ser geradas no console KMod).</p>
+<p class="note">A alocação pode falhar por fragmentação da VRAM mesmo com espaço livre suficiente; use <code>SPR_addSpriteSafe(..)</code> nesse caso.</p>
+</article>
+<article class="fn" id="fn-SPR_addSpriteExSafe">
+<h4><code>Sprite* SPR_addSpriteExSafe(const SpriteDefinition* spriteDef, s16 x, s16 y, u16 attribut, u16 flag)</code></h4>
+<p>Versão "safe" de <code>SPR_addSpriteEx(..)</code>: mesmos parâmetros e comportamento, mas em caso de falha de alocação de VRAM por fragmentação executa a desfragmentação e tenta novamente, garantindo sucesso sempre que houver espaço total suficiente.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir ao sprite.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial.</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos do sprite (ver macro <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>flag</code></td><td>Configurações do sprite (mesmos flags de <code>SPR_addSpriteEx(..)</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo sprite, ou <code>NULL</code> se a operação falhou (mensagens podem ser geradas no console KMod).</p>
+</article>
+<article class="fn" id="fn-SPR_addSpriteSafe">
+<h4><code>Sprite* SPR_addSpriteSafe(const SpriteDefinition* spriteDef, s16 x, s16 y, u16 attribut)</code></h4>
+<p>Versão "safe" de <code>SPR_addSprite(..)</code>: adiciona um sprite com alocação automática de recursos e visibilidade ligada, tratando a fragmentação da VRAM (desfragmenta e tenta de novo em caso de falha).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir ao sprite.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial.</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos do sprite (ver macro <code>TILE_ATTR()</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo sprite, ou <code>NULL</code> se a operação falhou (mensagens podem ser geradas no console KMod).</p>
+</article>
+<article class="fn" id="fn-SPR_releaseSprite">
+<h4><code>void SPR_releaseSprite(Sprite* sprite)</code></h4>
+<p>Libera o sprite especificado: seus recursos (VRAM, sprites de hardware) são devolvidos ao motor e ele é removido da tela na próxima chamada de <code>SPR_update()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite a liberar.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_getNumActiveSprite">
+<h4><code>u16 SPR_getNumActiveSprite(void)</code></h4>
+<p>Informa quantos sprites estão ativos (adicionados com <code>SPR_addSprite(..)</code> ou <code>SPR_addSpriteEx(..)</code>).</p>
+<p class="returns"><strong>Retorna:</strong> o número de sprites ativos.</p>
+</article>
+<article class="fn" id="fn-SPR_getUsedVDPSprite">
+<h4><code>u16 SPR_getUsedVDPSprite(void)</code></h4>
+<p>Informa o número (máximo) de sprites de hardware (VDP) usados pelos sprites ativos — soma do uso máximo de sprites de hardware de todos os sprites ativos. Útil para monitorar o limite de 80 sprites de hardware do VDP (64 em modo H32).</p>
+<p class="returns"><strong>Retorna:</strong> o número máximo de sprites VDP utilizados pelos sprites ativos.</p>
+</article>
+<article class="fn" id="fn-SPR_getFreeVRAM">
+<h4><code>u16 SPR_getFreeVRAM(void)</code></h4>
+<p>Informa a quantidade de VRAM ainda livre (em tiles) na região reservada ao motor de sprites.</p>
+<p class="returns"><strong>Retorna:</strong> a VRAM livre restante, em tiles.</p>
+</article>
+<article class="fn" id="fn-SPR_getLargestFreeVRAMBlock">
+<h4><code>u16 SPR_getLargestFreeVRAMBlock(void)</code></h4>
+<p>Informa o tamanho do maior bloco contíguo de VRAM livre (em tiles) do motor de sprites — valor relevante para diagnosticar falhas de alocação por fragmentação.</p>
+<p class="returns"><strong>Retorna:</strong> o tamanho do maior bloco livre de VRAM, em tiles.</p>
+</article>
+<article class="fn" id="fn-SPR_enableVDPSpriteChecking">
+<h4><code>void SPR_enableVDPSpriteChecking(void)</code></h4>
+<p>Ativa a verificação de sprites de hardware: impede a adição de um novo sprite se possivelmente não houver sprites de hardware suficientes para exibi-lo (contando o uso máximo de sprites de hardware de todos os sprites ativos), garantindo assim que todos sejam sempre exibidos. Por padrão o motor permite adicionar sprites mesmo com risco de faltar sprites de hardware.</p>
+</article>
+<article class="fn" id="fn-SPR_disableVDPSpriteChecking">
+<h4><code>void SPR_disableVDPSpriteChecking(void)</code></h4>
+<p>Desativa a verificação de sprites de hardware (comportamento padrão): permite adicionar novos sprites mesmo com risco de esgotar os sprites de hardware, o que pode causar desaparecimento de sprites em algumas situações, mas permite gerenciar mais sprites ativos ao mesmo tempo.</p>
+</article>
+<article class="fn" id="fn-SPR_defragVRAM">
+<h4><code>void SPR_defragVRAM(void)</code></h4>
+<p>Desfragmenta a VRAM alocada para sprites. Útil quando a alocação de um sprite falha (<code>SPR_addSprite(..)</code> ou <code>SPR_addSpriteEx(..)</code> retornam <code>NULL</code>) mesmo havendo VRAM total suficiente.</p>
+</article>
+<article class="fn" id="fn-SPR_loadAllFramesEx">
+<h4><code>u16** SPR_loadAllFramesEx(const SpriteDefinition* sprDef, u16 index, u16* totalNumTile, TransferMethod tm)</code></h4>
+<p>Carrega todos os frames de uma <code>SpriteDefinition</code> na VRAM a partir do índice de tile especificado, usando o método de transferência escolhido, e retorna a tabela de índices. A tabela é uma matriz 2D <code>table[anim][frame]</code> alocada dinamicamente — libere-a com <code>MEM_free(..)</code> quando não for mais necessária. Pode ser combinada com o callback de troca de frame (<code>SPR_setFrameChangeCallback(..)</code>) para atualizar automaticamente o índice de VRAM a cada frame com <code>SPR_setVRAMTileIndex(..)</code>, evitando uploads de tiles em tempo de jogo (troca-se apenas o índice).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprDef</code></td><td><code>SpriteDefinition</code> cujos frames serão carregados na VRAM.</td></tr>
+<tr><td><code>index</code></td><td>Posição de tile na VRAM onde os dados de tiles de todos os frames serão enviados.</td></tr>
+<tr><td><code>totalNumTile</code></td><td>Se não for NULL, recebe o número total de tiles usados para carregar todos os frames de animação.</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a tabela 2D de índices, ou NULL se não houver memória suficiente para alocá-la.</p>
+<p class="note">Atenção: chame esta função em tempo de inicialização/carregamento, pois ela pode ser bem demorada (vários frames de vídeo).</p>
+</article>
+<article class="fn" id="fn-SPR_loadAllFrames">
+<h4><code>u16** SPR_loadAllFrames(const SpriteDefinition* sprDef, u16 index, u16* totalNumTile)</code></h4>
+<p>Igual a <code>SPR_loadAllFramesEx(..)</code> usando DMA como método de transferência: carrega todos os frames da <code>SpriteDefinition</code> na VRAM no índice de tile especificado e retorna a tabela de índices 2D <code>table[anim][frame]</code> (libere com <code>MEM_free(..)</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprDef</code></td><td><code>SpriteDefinition</code> cujos frames serão carregados na VRAM.</td></tr>
+<tr><td><code>index</code></td><td>Posição de tile na VRAM onde os dados serão enviados.</td></tr>
+<tr><td><code>totalNumTile</code></td><td>Se não for NULL, recebe o número total de tiles usados.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a tabela 2D de índices, ou NULL se não houver memória suficiente para alocá-la.</p>
+<p class="note">Atenção: chame em tempo de inicialização/carregamento, pois pode ser bem demorada (vários frames). Exemplo de uso com callback de troca de frame:</p>
+<pre class="code">frameIndexes = SPR_loadAllFrames(sprite-&gt;definition, ind, NULL);
+SPR_setFrameChangeCallback(sprite, &amp;frameChanged);
+...
+void frameChanged(Sprite* sprite)
+{
+    u16 tileIndex = frameIndexes[sprite-&gt;animInd][sprite-&gt;frameInd];
+    SPR_setVRAMTileIndex(sprite, tileIndex);
+}</pre>
+</article>
+<article class="fn" id="fn-SPR_loadAllIndexes">
+<h4><code>u16** SPR_loadAllIndexes(const SpriteDefinition* sprDef, u16 index, u16* totalNumTile)</code></h4>
+<p>Igual a <code>SPR_loadAllFrames(..)</code>, porém apenas calcula a tabela de índices, sem carregar de fato os dados de tiles na VRAM (para isso use <code>SPR_loadAllTiles(..)</code> em seguida).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprDef</code></td><td><code>SpriteDefinition</code> para a qual calcular a tabela de índices.</td></tr>
+<tr><td><code>index</code></td><td>Posição de tile na VRAM onde os dados serão futuramente enviados (nenhum upload é feito aqui).</td></tr>
+<tr><td><code>totalNumTile</code></td><td>Se não for NULL, recebe o número total de tiles necessários.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a tabela 2D de índices, ou NULL se não houver memória suficiente para alocá-la.</p>
+</article>
+<article class="fn" id="fn-SPR_loadAllTiles">
+<h4><code>u16 SPR_loadAllTiles(const SpriteDefinition* sprDef, u16 index, u16** indexes, const TransferMethod tm)</code></h4>
+<p>Igual a <code>SPR_loadAllFrames(..)</code>, porém realiza apenas o upload dos dados de tiles do sprite para a VRAM; <code>SPR_loadAllIndexes(..)</code> deve ser chamada antes para construir a tabela de índices.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprDef</code></td><td><code>SpriteDefinition</code> cujos frames serão carregados na VRAM.</td></tr>
+<tr><td><code>index</code></td><td>Posição de tile na VRAM onde os dados serão enviados.</td></tr>
+<tr><td><code>indexes</code></td><td>Tabela 2D de índices com a posição de tile em VRAM de cada frame (construída previamente com <code>SPR_loadAllIndexes(..)</code>).</td></tr>
+<tr><td><code>tm</code></td><td>Método de transferência: <code>CPU</code>, <code>DMA</code>, <code>DMA_QUEUE</code> ou <code>DMA_QUEUE_COPY</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o número de tiles enviados à VRAM.</p>
+</article>
+<article class="fn" id="fn-SPR_setDefinition">
+<h4><code>bool SPR_setDefinition(Sprite* sprite, const SpriteDefinition* spriteDef)</code></h4>
+<p>Define a <code>SpriteDefinition</code> do sprite. Por padrão, o primeiro frame da primeira animação da definição é carregado. Permite trocar completamente o gráfico/conjunto de animações de um sprite já ativo.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir ao sprite.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se a alocação automática de recursos falhou, TRUE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_getPositionX">
+<h4><code>s16 SPR_getPositionX(Sprite* sprite)</code></h4>
+<p>Obtém a posição X do sprite (em coordenadas de tela).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a posição X do sprite.</p>
+</article>
+<article class="fn" id="fn-SPR_getPositionY">
+<h4><code>s16 SPR_getPositionY(Sprite* sprite)</code></h4>
+<p>Obtém a posição Y do sprite (em coordenadas de tela).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a posição Y do sprite.</p>
+</article>
+<article class="fn" id="fn-SPR_setPosition">
+<h4><code>void SPR_setPosition(Sprite* sprite, s16 x, s16 y)</code></h4>
+<p>Define a posição do sprite na tela.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>x</code></td><td>Posição X.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setHFlip">
+<h4><code>void SPR_setHFlip(Sprite* sprite, bool value)</code></h4>
+<p>Define o atributo de flip horizontal (espelhamento) do sprite. O motor ajusta automaticamente os offsets dos sprites de hardware internos usando as versões "Flip" do frame.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor do flip horizontal (TRUE ou FALSE).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setVFlip">
+<h4><code>void SPR_setVFlip(Sprite* sprite, bool value)</code></h4>
+<p>Define o atributo de flip vertical (espelhamento) do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor do flip vertical (TRUE ou FALSE).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setPalette">
+<h4><code>void SPR_setPalette(Sprite* sprite, u16 value)</code></h4>
+<p>Define o índice de palette usado pelo sprite (o VDP do Mega Drive tem 4 palettes de 16 cores).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Índice da palette (PAL0, PAL1, PAL2 ou PAL3).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setPriority">
+<h4><code>void SPR_setPriority(Sprite* sprite, bool value)</code></h4>
+<p>Define o atributo de prioridade do sprite em relação aos planos de fundo do VDP (com prioridade alta o sprite é desenhado sobre tiles de plano com prioridade alta).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor do atributo de prioridade (TRUE ou FALSE).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setPriorityAttribut">
+<h4><code>SPR_setPriorityAttribut(sprite, value)</code> <em>(macro, obsoleta)</em></h4>
+<p>Macro obsoleta (deprecated). Seu uso gera erro de compilação via <code>_Pragma("GCC error ...")</code>.</p>
+<p class="note">Use <code>SPR_setPriority(..)</code> em seu lugar.</p>
+</article>
+<article class="fn" id="fn-SPR_setDepth">
+<h4><code>void SPR_setDepth(Sprite* sprite, s16 value)</code></h4>
+<p>Define a profundidade (depth/Z) do sprite, usada na ordenação de exibição. Sprites com profundidade menor são exibidos na frente dos de profundidade maior. O sprite é reordenado <em>imediatamente</em> quando o valor muda.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor de profundidade (<code>SPR_MIN_DEPTH</code> para ficar sempre no topo).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setZ">
+<h4><code>void SPR_setZ(Sprite* sprite, s16 value)</code></h4>
+<p>Idêntica a <code>SPR_setDepth(..)</code> (apelido).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor de profundidade (Z).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAlwaysOnTop">
+<h4><code>void SPR_setAlwaysOnTop(Sprite* sprite)</code></h4>
+<p>Define a profundidade do sprite para que ele fique sempre na frente dos demais — equivalente a <code>SPR_setDepth(SPR_MIN_DEPTH)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAlwaysAtBottom">
+<h4><code>void SPR_setAlwaysAtBottom(Sprite* sprite)</code></h4>
+<p>Define a profundidade do sprite para que ele fique sempre atrás dos demais — equivalente a <code>SPR_setDepth(SPR_MAX_DEPTH)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAnimAndFrame">
+<h4><code>void SPR_setAnimAndFrame(Sprite* sprite, s16 anim, s16 frame)</code></h4>
+<p>Define a animação e o frame atuais do sprite de uma só vez.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>anim</code></td><td>Índice da animação a definir.</td></tr>
+<tr><td><code>frame</code></td><td>Índice do frame a definir.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAnim">
+<h4><code>void SPR_setAnim(Sprite* sprite, s16 anim)</code></h4>
+<p>Define a animação atual do sprite (reiniciando no primeiro frame).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>anim</code></td><td>Índice da animação a definir.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setFrame">
+<h4><code>void SPR_setFrame(Sprite* sprite, s16 frame)</code></h4>
+<p>Define o frame atual da animação do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>frame</code></td><td>Índice do frame a definir.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_nextFrame">
+<h4><code>void SPR_nextFrame(Sprite* sprite)</code></h4>
+<p>Avança o sprite para o próximo frame da animação atual (respeitando o ponto de loop da animação).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite a avançar de frame.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAutoAnimation">
+<h4><code>void SPR_setAutoAnimation(Sprite* sprite, bool value)</code></h4>
+<p>Ativa/desativa a animação automática do sprite (ativada por padrão). Com ela ativa, o motor avança os frames sozinho em <code>SPR_update()</code> conforme o <code>timer</code> de cada frame; desativada, o controle de frames passa a ser manual (<code>SPR_setFrame(..)</code>/<code>SPR_nextFrame(..)</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>TRUE para ativar a animação automática (padrão), FALSE caso contrário.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_getAutoAnimation">
+<h4><code>bool SPR_getAutoAnimation(Sprite* sprite)</code></h4>
+<p>Consulta o estado da animação automática do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> TRUE se a animação automática está ativada, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_setAnimationLoop">
+<h4><code>void SPR_setAnimationLoop(Sprite* sprite, bool value)</code></h4>
+<p>Ativa/desativa o loop de animação (ativado por padrão). Quando desativado, o sprite permanece no último frame ao terminar a animação, em vez de reiniciá-la.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>TRUE para ativar o loop (padrão), FALSE caso contrário.</td></tr></table>
+<p class="note">Ver também <code>SPR_FLAG_DISABLE_ANIMATION_LOOP</code> e <code>SPR_isAnimationDone(..)</code>.</p>
+</article>
+<article class="fn" id="fn-SPR_isAnimationDone">
+<h4><code>bool SPR_isAnimationDone(Sprite* sprite)</code></h4>
+<p>Indica se o sprite chegou ao fim da animação atual. Com a animação automática ativada (ver <code>SPR_setAutoAnimation(..)</code>), retorna TRUE apenas quando o último <em>tick</em> do último frame foi alcançado; com a animação automática desativada, retorna TRUE assim que o sprite está no último frame.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> TRUE se o fim da animação atual foi alcançado, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_setVRAMTileIndex">
+<h4><code>bool SPR_setVRAMTileIndex(Sprite* sprite, s16 value)</code></h4>
+<p>Define a posição de tile em VRAM reservada para este sprite. Por padrão o motor aloca a VRAM automaticamente, mas este método permite forçar a alocação manual e fixar a posição dos tiles do sprite na VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Posição de tile na VRAM onde os dados de tiles do sprite serão enviados. Use <strong>-1</strong> para voltar à alocação automática.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se a alocação automática falhou (só pode ocorrer com o sprite ativo), TRUE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_setAutoTileUpload">
+<h4><code>void SPR_setAutoTileUpload(Sprite* sprite, bool value)</code></h4>
+<p>Ativa/desativa o upload automático dos dados de tiles do sprite para a VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>TRUE para ativar o upload automático de tiles para a VRAM; FALSE para desativá-lo (você passa a ser responsável pelo upload).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setDelayedFrameUpdate">
+<h4><code>void SPR_setDelayedFrameUpdate(Sprite* sprite, bool value)</code></h4>
+<p>Ativa/desativa o adiamento da atualização de frame quando a capacidade de transferência do DMA se esgota.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>TRUE para ativar o adiamento quando o DMA está sem capacidade (padrão); FALSE para desativá-lo — o frame será sempre atualizado imediatamente, o que pode causar glitches gráficos (atualização durante o display ativo).</td></tr></table>
+<p class="note">Ver também <code>SPR_FLAG_DISABLE_DELAYED_FRAME_UPDATE</code>.</p>
+</article>
+<article class="fn" id="fn-SPR_setFrameChangeCallback">
+<h4><code>void SPR_setFrameChangeCallback(Sprite* sprite, FrameChangeCallback* callback)</code></h4>
+<p>Define o callback de evento de troca de frame do sprite. O callback (se não for NULL) é chamado no processamento de troca de frame durante <code>SPR_update()</code> (cuidado: <code>sprite-&gt;status</code> não está atualizado nesse ponto). Permite aplicar comportamento especial quando o frame muda — por exemplo, desativar o loop de animação zerando <code>sprite-&gt;timer</code> ao chegar ao último frame, ou atualizar o índice de VRAM ao usar <code>SPR_loadAllFrames(..)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>callback</code></td><td>Ponteiro de função a chamar quando o frame de animação do sprite mudar (ver <code>FrameChangeCallback</code>).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_getVisibility">
+<h4><code>SpriteVisibility SPR_getVisibility(Sprite* sprite)</code></h4>
+<p>Retorna o estado de <em>visibility</em> configurado para o sprite. Atenção: diferente de <code>SPR_isVisible(..)</code> — aqui o retorno é o modo configurado: <code>VISIBLE</code> (visível), <code>HIDDEN</code> (oculto), <code>AUTO_FAST</code> (cálculo automático global, apenas pela posição X) ou <code>AUTO_SLOW</code> (cálculo automático por sprite de hardware, apenas pela posição X).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o estado de <em>visibility</em> do sprite.</p>
+</article>
+<article class="fn" id="fn-SPR_isVisible">
+<h4><code>bool SPR_isVisible(Sprite* sprite, bool recompute)</code></h4>
+<p>Retorna o estado <em>visível</em> efetivo do sprite (significativo apenas com visibilidade AUTO ativada, ver <code>SPR_setVisibility(..)</code>). Observe que apenas a posição X do sprite é usada para determinar a visibilidade.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr>
+<tr><td><code>recompute</code></td><td>Força o recálculo da visibilidade. Só é necessário se <code>SPR_update()</code> não foi chamado desde a última mudança de posição (pode forçar o processamento de atualização de frame).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> TRUE se o sprite está visível, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_setVisibility">
+<h4><code>void SPR_setVisibility(Sprite* sprite, SpriteVisibility value)</code></h4>
+<p>Define o estado de <em>visibility</em> do sprite. O interesse em manter um sprite oculto é não consumir o orçamento de sprites por scanline: o VDP é limitado a no máximo 20 sprites ou 320 pixels de sprite por scanline (16 sprites/256 px em modo H32); ultrapassado o limite, os sprites seguintes não são renderizados. Quando um sprite fica não visível (automática ou manualmente), sua posição é levada para fora da tela <em>verticalmente</em>, deixando de consumir esse orçamento — por isso apenas o teste da coordenada X é necessário para determinar a visibilidade.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td><code>VISIBLE</code> = visível; <code>HIDDEN</code> = oculto; <code>AUTO_FAST</code> = visibilidade automática global (apenas posição X); <code>AUTO_SLOW</code> = visibilidade automática por sprite de hardware (apenas posição X).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAlwaysVisible">
+<h4><code>SPR_setAlwaysVisible(sprite, value)</code> <em>(macro, obsoleta)</em></h4>
+<p>Macro obsoleta (deprecated). Seu uso gera erro de compilação via <code>_Pragma("GCC error ...")</code>.</p>
+<p class="note">Use <code>SPR_setVisibility(..)</code> em seu lugar.</p>
+</article>
+<article class="fn" id="fn-SPR_setNeverVisible">
+<h4><code>SPR_setNeverVisible(sprite, value)</code> <em>(macro, obsoleta)</em></h4>
+<p>Macro obsoleta (deprecated). Seu uso gera erro de compilação via <code>_Pragma("GCC error ...")</code>.</p>
+<p class="note">Use <code>SPR_setVisibility(..)</code> em seu lugar.</p>
+</article>
+<article class="fn" id="fn-SPR_computeVisibility">
+<h4><code>SPR_computeVisibility(sprite)</code> <em>(macro, obsoleta)</em></h4>
+<p>Macro obsoleta (deprecated). Seu uso gera erro de compilação via <code>_Pragma("GCC error ...")</code>.</p>
+<p class="note">Use <code>SPR_isVisible(sprite, TRUE)</code> em seu lugar.</p>
+</article>
+<article class="fn" id="fn-SPR_clear">
+<h4><code>void SPR_clear(void)</code></h4>
+<p>Limpa todos os sprites exibidos. Permite ocultar rapidamente todos os sprites sem liberar seus recursos; eles voltam a ser exibidos simplesmente chamando <code>SPR_update()</code>.</p>
+</article>
+<article class="fn" id="fn-SPR_update">
+<h4><code>void SPR_update(void)</code></h4>
+<p>Atualiza e exibe a lista de sprites ativos. Atualiza os estados internos de todos os sprites ativos e prepara o cache da tabela de sprites para envio ao hardware (VDP) no V-Int. Deve ser chamada tipicamente uma vez por frame, após a lógica do jogo.</p>
+</article>
+<article class="fn" id="fn-SPR_logProfil">
+<h4><code>void SPR_logProfil(void)</code></h4>
+<p>Registra as informações de profiling do motor (quando habilitadas) na janela de mensagens do KMod (emulador Gens KMod).</p>
+</article>
+<article class="fn" id="fn-SPR_logSprites">
+<h4><code>void SPR_logSprites(void)</code></h4>
+<p>Registra as informações dos sprites (quando habilitadas) na janela de mensagens do KMod.</p>
+</article>
+</div>
+</section>
+<section class="module" id="mod-sprite-eng-legacy">
+<h2>sprite_eng_legacy.h <span class="subtitle">Motor de sprites legado (versão de setembro/2022)</span></h2>
+<p class="mod-desc">Versão <strong>legada</strong> do motor de sprites do SGDK, correspondente ao estado de setembro de 2022, mantida apenas por <strong>compatibilidade</strong> com projetos antigos. Ela é compilada somente quando o símbolo <code>LEGACY_SPRITE_ENGINE</code> está definido (caso contrário, vale o sprite_eng.h atual). A API é quase idêntica à do motor atual; a principal diferença é o modelo de alocação de sprites de hardware do VDP: no motor legado cada <code>Sprite</code> reserva um bloco fixo de sprites VDP (com alocação automática via <code>SPR_FLAG_AUTO_SPRITE_ALLOC</code> ou manual via parâmetro <code>spriteIndex</code>/<code>SPR_setSpriteTableIndex(..)</code>), enquanto o motor novo faz essa alocação dinamicamente a cada frame. O header legado também não possui as funções mais recentes (<code>SPR_getUsedVDPSprite</code>, <code>SPR_getFreeVRAM</code>, <code>SPR_getLargestFreeVRAMBlock</code>, <code>SPR_enableVDPSpriteChecking</code>, <code>SPR_disableVDPSpriteChecking</code>, <code>SPR_loadAllFramesEx</code>, <code>SPR_loadAllIndexes</code>, <code>SPR_loadAllTiles</code>). Para projetos novos, prefira sempre o motor atual (sprite_eng.h).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>COLLISION_TYPE_NONE</code></td><td><code>0</code></td><td>Sem tipo de colisão.</td></tr>
+<tr><td><code>COLLISION_TYPE_BOX</code></td><td><code>1</code></td><td>Colisão por caixa delimitadora (estrutura <code>BoxCollision</code>).</td></tr>
+<tr><td><code>COLLISION_TYPE_CIRCLE</code></td><td><code>2</code></td><td>Colisão por círculo (estrutura <code>CircleCollision</code>).</td></tr>
+<tr><td><code>SPR_FLAG_INSERT_HEAD</code></td><td><code>0x4000</code></td><td>Insere o sprite na posição 0 (cabeça) da lista em vez da última posição (padrão).</td></tr>
+<tr><td><code>SPR_FLAG_DISABLE_ANIMATION_LOOP</code></td><td><code>0x2000</code></td><td>Desativa o loop automático da animação (a animação termina e permanece no último frame).</td></tr>
+<tr><td><code>SPR_FLAG_DISABLE_DELAYED_FRAME_UPDATE</code></td><td><code>0x0080</code></td><td>Desativa o adiamento da atualização de frame quando falta capacidade de DMA (atualização sempre imediata, pode causar glitches). Observação: o valor difere do motor atual (<code>0x1000</code>).</td></tr>
+<tr><td><code>SPR_FLAG_AUTO_VRAM_ALLOC</code></td><td><code>0x1000</code></td><td>Ativa a alocação automática de VRAM.</td></tr>
+<tr><td><code>SPR_FLAG_AUTO_SPRITE_ALLOC</code></td><td><code>0x0800</code></td><td>Ativa a alocação automática de sprites de hardware (VDP). <em>Exclusivo do motor legado.</em></td></tr>
+<tr><td><code>SPR_FLAG_AUTO_TILE_UPLOAD</code></td><td><code>0x0400</code></td><td>Ativa o upload automático dos tiles do sprite para a VRAM.</td></tr>
+<tr><td><code>SPR_FLAG_AUTO_VISIBILITY</code></td><td><code>0x0200</code></td><td>Ativa o cálculo automático de visibilidade.</td></tr>
+<tr><td><code>SPR_FLAG_FAST_AUTO_VISIBILITY</code></td><td><code>0x0100</code></td><td>Cálculo rápido de visibilidade (global no meta-sprite; só faz sentido com <code>SPR_FLAG_AUTO_VISIBILITY</code>).</td></tr>
+<tr><td><code>SPR_FLAG_MASK</code></td><td>combinação dos flags acima</td><td>Máscara com todos os flags válidos (inclui <code>SPR_FLAG_AUTO_SPRITE_ALLOC</code>).</td></tr>
+<tr><td><code>SPR_MIN_DEPTH</code></td><td><code>-0x8000</code></td><td>Profundidade mínima de um sprite (sempre na frente dos demais).</td></tr>
+<tr><td><code>SPR_MAX_DEPTH</code></td><td><code>0x7FFF</code></td><td>Profundidade máxima de um sprite (sempre atrás dos demais).</td></tr>
+</table>
+<h3>Variáveis globais</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>Pool* spritesPool</code></td><td>&mdash;</td><td>Pool de objetos <code>Sprite</code> usado pelo motor.</td></tr>
+<tr><td><code>Sprite* firstSprite</code></td><td>&mdash;</td><td>Primeiro sprite alocado (NULL se nenhum sprite alocado).</td></tr>
+<tr><td><code>Sprite* lastSprite</code></td><td>&mdash;</td><td>Último sprite alocado (NULL se nenhum sprite alocado).</td></tr>
+<tr><td><code>u16 spriteVramSize</code></td><td>&mdash;</td><td>Quantidade de VRAM (em tiles) reservada para o motor de sprites.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-SpriteVisibility-legacy">
+<h4><code>SpriteVisibility</code></h4>
+<p>Enumeração dos estados de visibilidade de um sprite (idêntica à do motor atual).</p>
+<pre class="code">typedef enum
+{
+    VISIBLE,    // sprite visível (nenhum cálculo necessário)
+    HIDDEN,     // sprite oculto (nenhum cálculo necessário)
+    AUTO_FAST,  // visibilidade automática - RÁPIDA (cálculo global no meta-sprite)
+    AUTO_SLOW,  // visibilidade automática - LENTA (cálculo por sprite de hardware)
+} SpriteVisibility;</pre>
+</article>
+<article class="type" id="type-BoxCollision-legacy">
+<h4><code>BoxCollision</code></h4>
+<p>Estrutura simples de caixa (box) para colisão (idêntica à do motor atual).</p>
+<pre class="code">typedef struct
+{
+    s8 x;   // posição X (borda esquerda)
+    s8 y;   // posição Y (borda superior)
+    u8 w;   // largura
+    u8 h;   // altura
+} BoxCollision;</pre>
+</article>
+<article class="type" id="type-CircleCollision-legacy">
+<h4><code>CircleCollision</code></h4>
+<p>Estrutura simples de círculo para colisão (idêntica à do motor atual).</p>
+<pre class="code">typedef struct
+{
+    s8 x;     // posição X do centro
+    s8 y;     // posição Y do centro
+    u16 ray;  // raio do círculo
+} CircleCollision;</pre>
+</article>
+<article class="type" id="type-Collision-legacy">
+<h4><code>Collision</code></h4>
+<p>Definição de colisão com zonas <em>hit</em> e <em>attack</em> (idêntica à do motor atual; tipos <code>COLLISION_TYPE_BOX</code> ou <code>COLLISION_TYPE_CIRCLE</code>).</p>
+<pre class="code">typedef struct _collision
+{
+    u8 typeHit;      // tipo da colisão de hit
+    u8 typeAttack;   // tipo da colisão de attack
+    union { BoxCollision box; CircleCollision circle; } hit;
+    union { BoxCollision box; CircleCollision circle; } attack;
+} Collision;</pre>
+</article>
+<article class="type" id="type-FrameVDPSprite-legacy">
+<h4><code>FrameVDPSprite</code></h4>
+<p>Informações de um único sprite de hardware (VDP) de um frame de animação (idêntica à do motor atual).</p>
+<pre class="code">typedef struct
+{
+    u8 offsetY;      // offset Y relativo à posição global do Sprite
+    u8 offsetYFlip;  // offset Y na versão espelhada (flip)
+    u8 size;         // tamanho do sprite VDP (ver macro SPRITE_SIZE)
+    u8 offsetX;      // offset X relativo à posição global do Sprite
+    u8 offsetXFlip;  // offset X na versão espelhada (flip)
+    u8 numTile;      // número de tiles deste sprite VDP
+} FrameVDPSprite;</pre>
+</article>
+<article class="type" id="type-AnimationFrame-legacy">
+<h4><code>AnimationFrame</code></h4>
+<p>Frame de animação de um sprite (idêntica à do motor atual).</p>
+<pre class="code">typedef struct
+{
+    s8 numSprite;        // número de sprites VDP do frame; bit 7 é flag interna,
+                         // use (numSprite &amp; 0x7F) para obter a contagem
+    u8 timer;            // tempo de exibição do frame (em 1/60 de segundo)
+    TileSet* tileset;    // tileset com os tiles do frame (ordenados para sprite)
+    Collision* collision;// estrutura de colisão (não utilizada atualmente)
+    FrameVDPSprite frameVDPSprites[]; // sprites VDP que compõem o frame
+} AnimationFrame;</pre>
+</article>
+<article class="type" id="type-Animation-legacy">
+<h4><code>Animation</code></h4>
+<p>Estrutura de uma animação de sprite (idêntica à do motor atual).</p>
+<pre class="code">typedef struct
+{
+    u8 numFrame;              // número de frames desta animação (máx. = 255)
+    u8 loop;                  // índice do frame de retorno do loop
+    AnimationFrame** frames;  // frames da animação
+} Animation;</pre>
+</article>
+<article class="type" id="type-SpriteDefinition-legacy">
+<h4><code>SpriteDefinition</code></h4>
+<p>Definição de sprite com todas as animações e informações internas (idêntica à do motor atual).</p>
+<pre class="code">typedef struct
+{
+    u16 w;                   // largura da célula do frame em pixels
+    u16 h;                   // altura da célula do frame em pixels
+    Palette* palette;        // dados da palette padrão
+    u16 numAnimation;        // número de animações
+    Animation** animations;  // definições das animações
+    u16 maxNumTile;          // máx. de tiles por frame (alocação de VRAM)
+    u16 maxNumSprite;        // máx. de sprites VDP por frame (alocação de sprites VDP)
+} SpriteDefinition;</pre>
+</article>
+<article class="type" id="type-Sprite-legacy">
+<h4><code>Sprite</code></h4>
+<p>Estrutura de estado de um sprite ativo. <strong>Atenção:</strong> aloque sempre via <code>SPR_addSprite(..)</code>. Em relação ao motor atual, contém campos extras ligados à alocação fixa de sprites VDP (<code>VDPSpriteIndex</code>, <code>lastVDPSprite</code>, <code>lastNumSprite</code>, <code>spriteToHide</code>).</p>
+<pre class="code">typedef struct Sprite
+{
+    u16 status;            // estado interno e alocação automática (interno)
+    u16 visibility;        // visibilidade do frame atual por sprite VDP (máx. = 16)
+    const SpriteDefinition* definition; // definição do sprite
+    void (*onFrameChange)(struct Sprite* sprite); // callback de troca de frame
+    Animation* animation;  // cache da animação atual (interno)
+    AnimationFrame* frame; // cache do frame atual (interno)
+    s16 animInd;           // índice da animação atual (interno)
+    s16 frameInd;          // índice do frame atual (interno)
+    s16 timer;             // timer do frame atual (interno)
+    s16 x;                 // posição X com offset de 0x80 (posição interna do VDP)
+    s16 y;                 // posição Y com offset de 0x80 (posição interna do VDP)
+    s16 depth;             // profundidade (Z) para ordenação
+    u16 attribut;          // atributos + índice de tile em VRAM (ver TILE_ATTR_FULL())
+    u16 VDPSpriteIndex;    // índice do primeiro sprite VDP alocado (0 se ainda não alocado);
+                           // a quantidade alocada é definition-&gt;maxNumSprite
+    VDPSprite* lastVDPSprite; // último sprite VDP usado (atualização de link, interno)
+    u16 lastNumSprite;     // número de sprites VDP usados pelo frame atual (interno)
+    s16 spriteToHide;      // interno
+    u32 data;              // campo livre para dados do usuário
+    struct Sprite* prev;   // sprite anterior na lista
+    struct Sprite* next;   // próximo sprite na lista
+} Sprite;</pre>
+</article>
+<article class="type" id="type-FrameChangeCallback-legacy">
+<h4><code>FrameChangeCallback</code></h4>
+<p>Tipo do callback de troca de frame (idêntico ao do motor atual): chamado durante <code>SPR_update()</code> quando o frame muda (o campo <code>sprite-&gt;status</code> não está atualizado nesse momento).</p>
+<pre class="code">typedef void FrameChangeCallback(Sprite* sprite); // sprite: o sprite cujo frame acabou de mudar</pre>
+</article>
+</div>
+<div class="functions">
+<h3>Funções</h3>
+<article class="fn" id="fn-SPR_init-legacy">
+<h4><code>void SPR_init(void)</code></h4>
+<p>Inicializa o motor de sprites legado com os parâmetros padrão (420 tiles reservados em VRAM). Também inicializa o sistema de alocação de sprites de hardware.</p>
+</article>
+<article class="fn" id="fn-SPR_initEx-legacy">
+<h4><code>void SPR_initEx(u16 vramSize)</code></h4>
+<p>Inicializa o motor de sprites legado com parâmetros avançados: aloca a região de VRAM para tiles de sprite e inicializa o sistema de alocação de sprites de hardware.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>vramSize</code></td><td>Tamanho (em tiles) da região de VRAM para alocação automática. Se 0, usa o padrão (420 tiles).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_end-legacy">
+<h4><code>void SPR_end(void)</code></h4>
+<p>Encerra o motor de sprites e libera os recursos associados (região de VRAM e sprites de hardware).</p>
+</article>
+<article class="fn" id="fn-SPR_isInitialized-legacy">
+<h4><code>bool SPR_isInitialized(void)</code></h4>
+<p>Informa se o motor de sprites está inicializado.</p>
+<p class="returns"><strong>Retorna:</strong> FALSE se não inicializado, TRUE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_reset-legacy">
+<h4><code>void SPR_reset(void)</code></h4>
+<p>Reinicializa o motor de sprites: libera todos os sprites alocados e seus recursos.</p>
+</article>
+<article class="fn" id="fn-SPR_addSpriteEx-legacy">
+<h4><code>Sprite* SPR_addSpriteEx(const SpriteDefinition* spriteDef, s16 x, s16 y, u16 attribut, u16 spriteIndex, u16 flag)</code></h4>
+<p>Adiciona um novo sprite com parâmetros específicos e o retorna. Diferente do motor atual, recebe também <code>spriteIndex</code> para alocação manual de sprites VDP. Sem visibilidade automática habilitada, o sprite é considerado não visível por padrão. Libere com <code>SPR_releaseSprite(..)</code> ou <code>SPR_reset()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir ao sprite.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial.</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos do sprite (ver macro <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>spriteIndex</code></td><td>Índice do primeiro sprite na tabela de sprites do VDP usado para exibir este Sprite (faixa [1..79]). Importante: usado apenas com alocação manual de sprites VDP (ver <code>flag</code>).</td></tr>
+<tr><td><code>flag</code></td><td>Configurações do sprite: <code>SPR_FLAG_DISABLE_DELAYED_FRAME_UPDATE</code>, <code>SPR_FLAG_AUTO_VISIBILITY</code>, <code>SPR_FLAG_FAST_AUTO_VISIBILITY</code>, <code>SPR_FLAG_AUTO_VRAM_ALLOC</code>, <code>SPR_FLAG_AUTO_SPRITE_ALLOC</code> (alocação automática de sprites VDP; sem ele, defina o índice via <code>spriteIndex</code> ou <code>SPR_setSpriteTableIndex(..)</code>), <code>SPR_FLAG_AUTO_TILE_UPLOAD</code> e <code>SPR_FLAG_INSERT_HEAD</code>. Recomenda-se <code>SPR_FLAG_AUTO_VISIBILITY | SPR_FLAG_AUTO_VRAM_ALLOC | SPR_FLAG_AUTO_SPRITE_ALLOC | SPR_FLAG_AUTO_TILE_UPLOAD</code>.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo sprite, ou <code>NULL</code> se a operação falhou (mensagens podem ser geradas no console KMod).</p>
+<p class="note">Com alocação automática de VRAM a criação pode falhar por fragmentação mesmo havendo VRAM suficiente; use <code>SPR_addSpriteExSafe(..)</code> nesse caso.</p>
+</article>
+<article class="fn" id="fn-SPR_addSprite-legacy">
+<h4><code>Sprite* SPR_addSprite(const SpriteDefinition* spriteDef, s16 x, s16 y, u16 attribut)</code></h4>
+<p>Adiciona um novo sprite com alocação automática de recursos (VRAM e sprites de hardware) e visibilidade ligada. Os padrões podem ser alterados depois com <code>SPR_setVRAMTileIndex(..)</code>, <code>SPR_setSpriteTableIndex(..)</code>, <code>SPR_setAutoTileUpload(..)</code> e <code>SPR_setVisibility(..)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir ao sprite.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial.</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos do sprite (ver macro <code>TILE_ATTR()</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo sprite, ou <code>NULL</code> se a operação falhou (mensagens podem ser geradas no console KMod).</p>
+<p class="note">Pode falhar por fragmentação de VRAM mesmo com espaço suficiente; use <code>SPR_addSpriteSafe(..)</code> nesse caso.</p>
+</article>
+<article class="fn" id="fn-SPR_addSpriteExSafe-legacy">
+<h4><code>Sprite* SPR_addSpriteExSafe(const SpriteDefinition* spriteDef, s16 x, s16 y, u16 attribut, u16 spriteIndex, u16 flag)</code></h4>
+<p>Versão "safe" de <code>SPR_addSpriteEx(..)</code> do motor legado: mesmos parâmetros (incluindo <code>spriteIndex</code> para alocação manual de sprites VDP), mas trata a fragmentação da VRAM antes de falhar.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir ao sprite.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial.</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos do sprite (ver macro <code>TILE_ATTR()</code>).</td></tr>
+<tr><td><code>spriteIndex</code></td><td>Índice do primeiro sprite na tabela de sprites do VDP (&gt; 0 e &lt; 128). Usado apenas com alocação manual de sprites VDP (ver <code>flag</code>).</td></tr>
+<tr><td><code>flag</code></td><td>Configurações do sprite (mesmos flags de <code>SPR_addSpriteEx(..)</code>, incluindo <code>SPR_FLAG_AUTO_SPRITE_ALLOC</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo sprite, ou <code>NULL</code> se a operação falhou (mensagens podem ser geradas no console KMod).</p>
+</article>
+<article class="fn" id="fn-SPR_addSpriteSafe-legacy">
+<h4><code>Sprite* SPR_addSpriteSafe(const SpriteDefinition* spriteDef, s16 x, s16 y, u16 attribut)</code></h4>
+<p>Versão "safe" de <code>SPR_addSprite(..)</code>: alocação automática de recursos, visibilidade ligada e tratamento da fragmentação da VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir ao sprite.</td></tr>
+<tr><td><code>x</code></td><td>Posição X inicial.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y inicial.</td></tr>
+<tr><td><code>attribut</code></td><td>Atributos do sprite (ver macro <code>TILE_ATTR()</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo sprite, ou <code>NULL</code> se a operação falhou (mensagens podem ser geradas no console KMod).</p>
+</article>
+<article class="fn" id="fn-SPR_releaseSprite-legacy">
+<h4><code>void SPR_releaseSprite(Sprite* sprite)</code></h4>
+<p>Libera o sprite especificado (deixa de ser visível e libera seus recursos); ele é removido da tela na próxima chamada de <code>SPR_update()</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite a liberar.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_getNumActiveSprite-legacy">
+<h4><code>u16 SPR_getNumActiveSprite(void)</code></h4>
+<p>Informa o número de sprites ativos (adicionados com <code>SPR_addSprite(..)</code> ou <code>SPR_addSpriteEx(..)</code>).</p>
+<p class="returns"><strong>Retorna:</strong> o número de sprites ativos.</p>
+</article>
+<article class="fn" id="fn-SPR_defragVRAM-legacy">
+<h4><code>void SPR_defragVRAM(void)</code></h4>
+<p>Desfragmenta a VRAM alocada para sprites; ajuda quando a alocação falha (<code>SPR_addSprite(..)</code>/<code>SPR_addSpriteEx(..)</code> retornam <code>NULL</code>).</p>
+</article>
+<article class="fn" id="fn-SPR_loadAllFrames-legacy">
+<h4><code>u16** SPR_loadAllFrames(const SpriteDefinition* sprDef, u16 index, u16* totalNumTile)</code></h4>
+<p>Carrega todos os frames da <code>SpriteDefinition</code> (usando DMA) na VRAM a partir do índice de tile especificado e retorna a tabela de índices 2D <code>table[anim][frame]</code>, alocada dinamicamente (libere com <code>MEM_free(..)</code>). Combine com o callback de troca de frame (<code>SPR_setFrameChangeCallback(..)</code>) para atualizar o índice de VRAM automaticamente via <code>SPR_setVRAMTileIndex(..)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprDef</code></td><td><code>SpriteDefinition</code> cujos frames serão carregados na VRAM.</td></tr>
+<tr><td><code>index</code></td><td>Posição de tile na VRAM onde os dados serão enviados.</td></tr>
+<tr><td><code>totalNumTile</code></td><td>Se não for NULL, recebe o número total de tiles usados.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a tabela 2D de índices, ou NULL se não houver memória suficiente para alocá-la.</p>
+<p class="note">Atenção: chame em tempo de inicialização/carregamento, pois pode ser bem demorada (vários frames). O motor legado não possui as variantes <code>SPR_loadAllFramesEx</code>, <code>SPR_loadAllIndexes</code> e <code>SPR_loadAllTiles</code>.</p>
+</article>
+<article class="fn" id="fn-SPR_setDefinition-legacy">
+<h4><code>bool SPR_setDefinition(Sprite* sprite, const SpriteDefinition* spriteDef)</code></h4>
+<p>Define a <code>SpriteDefinition</code> do sprite; por padrão carrega o primeiro frame da primeira animação.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>spriteDef</code></td><td>Dados de <code>SpriteDefinition</code> a atribuir.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se a alocação automática de recursos falhou, TRUE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_getPositionX-legacy">
+<h4><code>s16 SPR_getPositionX(Sprite* sprite)</code></h4>
+<p>Obtém a posição X do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a posição X do sprite.</p>
+</article>
+<article class="fn" id="fn-SPR_getPositionY-legacy">
+<h4><code>s16 SPR_getPositionY(Sprite* sprite)</code></h4>
+<p>Obtém a posição Y do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> a posição Y do sprite.</p>
+</article>
+<article class="fn" id="fn-SPR_setPosition-legacy">
+<h4><code>void SPR_setPosition(Sprite* sprite, s16 x, s16 y)</code></h4>
+<p>Define a posição do sprite na tela.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>x</code></td><td>Posição X.</td></tr>
+<tr><td><code>y</code></td><td>Posição Y.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setHFlip-legacy">
+<h4><code>void SPR_setHFlip(Sprite* sprite, bool value)</code></h4>
+<p>Define o atributo de flip horizontal do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor do flip horizontal (TRUE ou FALSE).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setVFlip-legacy">
+<h4><code>void SPR_setVFlip(Sprite* sprite, bool value)</code></h4>
+<p>Define o atributo de flip vertical do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor do flip vertical (TRUE ou FALSE).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setPalette-legacy">
+<h4><code>void SPR_setPalette(Sprite* sprite, u16 value)</code></h4>
+<p>Define o índice de palette do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Índice da palette (PAL0, PAL1, PAL2 ou PAL3).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setPriority-legacy">
+<h4><code>void SPR_setPriority(Sprite* sprite, bool value)</code></h4>
+<p>Define o atributo de prioridade do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor do atributo de prioridade (TRUE ou FALSE).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setPriorityAttribut-legacy">
+<h4><code>SPR_setPriorityAttribut(sprite, value)</code> <em>(macro, obsoleta)</em></h4>
+<p>Macro obsoleta (deprecated). Seu uso gera erro de compilação via <code>_Pragma("GCC error ...")</code>.</p>
+<p class="note">Use <code>SPR_setPriority(..)</code> em seu lugar.</p>
+</article>
+<article class="fn" id="fn-SPR_setDepth-legacy">
+<h4><code>void SPR_setDepth(Sprite* sprite, s16 value)</code></h4>
+<p>Define a profundidade (depth/Z) do sprite para ordenação de exibição. Sprites com profundidade menor aparecem na frente; a reordenação é <em>imediata</em> quando o valor muda.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor de profundidade (<code>SPR_MIN_DEPTH</code> para ficar sempre no topo).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setZ-legacy">
+<h4><code>void SPR_setZ(Sprite* sprite, s16 value)</code></h4>
+<p>Idêntica a <code>SPR_setDepth(..)</code> (apelido).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Valor de profundidade (Z).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAlwaysOnTop-legacy">
+<h4><code>void SPR_setAlwaysOnTop(Sprite* sprite)</code></h4>
+<p>Define a profundidade do sprite para que fique sempre na frente dos demais — equivalente a <code>SPR_setDepth(SPR_MIN_DEPTH)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAlwaysAtBottom-legacy">
+<h4><code>void SPR_setAlwaysAtBottom(Sprite* sprite)</code></h4>
+<p>Define a profundidade do sprite para que fique sempre atrás dos demais — equivalente a <code>SPR_setDepth(SPR_MAX_DEPTH)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAnimAndFrame-legacy">
+<h4><code>void SPR_setAnimAndFrame(Sprite* sprite, s16 anim, s16 frame)</code></h4>
+<p>Define a animação e o frame atuais do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>anim</code></td><td>Índice da animação a definir.</td></tr>
+<tr><td><code>frame</code></td><td>Índice do frame a definir.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAnim-legacy">
+<h4><code>void SPR_setAnim(Sprite* sprite, s16 anim)</code></h4>
+<p>Define a animação atual do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>anim</code></td><td>Índice da animação a definir.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setFrame-legacy">
+<h4><code>void SPR_setFrame(Sprite* sprite, s16 frame)</code></h4>
+<p>Define o frame atual da animação do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>frame</code></td><td>Índice do frame a definir.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_nextFrame-legacy">
+<h4><code>void SPR_nextFrame(Sprite* sprite)</code></h4>
+<p>Avança o sprite para o próximo frame da animação atual.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite a avançar de frame.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAutoAnimation-legacy">
+<h4><code>void SPR_setAutoAnimation(Sprite* sprite, bool value)</code></h4>
+<p>Ativa/desativa a animação automática (ativada por padrão).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>TRUE para ativar a animação automática (padrão), FALSE caso contrário.</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_getAutoAnimation-legacy">
+<h4><code>bool SPR_getAutoAnimation(Sprite* sprite)</code></h4>
+<p>Consulta o estado da animação automática do sprite.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> TRUE se a animação automática está ativada, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_setAnimationLoop-legacy">
+<h4><code>void SPR_setAnimationLoop(Sprite* sprite, bool value)</code></h4>
+<p>Ativa/desativa o loop de animação (ativado por padrão). Desativado, o sprite permanece no último frame ao fim da animação.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>TRUE para ativar o loop (padrão), FALSE caso contrário.</td></tr></table>
+<p class="note">Ver também <code>SPR_FLAG_DISABLE_ANIMATION_LOOP</code> e <code>SPR_isAnimationDone(..)</code>.</p>
+</article>
+<article class="fn" id="fn-SPR_isAnimationDone-legacy">
+<h4><code>bool SPR_isAnimationDone(Sprite* sprite)</code></h4>
+<p>Indica se o sprite chegou ao fim da animação atual. Com animação automática ativada, retorna TRUE apenas no último <em>tick</em> do último frame; com ela desativada, retorna TRUE assim que o sprite está no último frame.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> TRUE se o fim da animação atual foi alcançado, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_setVRAMTileIndex-legacy">
+<h4><code>bool SPR_setVRAMTileIndex(Sprite* sprite, s16 value)</code></h4>
+<p>Define a posição de tile em VRAM reservada ao sprite (alocação manual) ou retorna à alocação automática.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Posição de tile na VRAM para os dados do sprite. Use <strong>-1</strong> para alocação automática.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se a alocação automática falhou (só pode ocorrer com o sprite ativo), TRUE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_setSpriteTableIndex-legacy">
+<h4><code>bool SPR_setSpriteTableIndex(Sprite* sprite, s16 value)</code></h4>
+<p>Define o índice de sprite VDP a usar para este sprite. Por padrão o motor aloca os sprites VDP automaticamente, mas este método permite fixar manualmente o índice do primeiro sprite VDP. Ao definir o índice manualmente, garanta que existam sprites VDP contíguos disponíveis suficientes nessa posição para atender à necessidade do sprite. <em>Função exclusiva do motor legado.</em></p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>Índice do primeiro sprite na tabela de sprites do VDP (&gt; 0 e &lt; 128). Use <strong>-1</strong> para alocação automática.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se a alocação automática falhou (só pode ocorrer com o sprite ativo), TRUE caso contrário.</p>
+<p class="note">Atenção: o sprite 0 não pode ser usado, pois é reservado internamente.</p>
+</article>
+<article class="fn" id="fn-SPR_setAutoTileUpload-legacy">
+<h4><code>void SPR_setAutoTileUpload(Sprite* sprite, bool value)</code></h4>
+<p>Ativa/desativa o upload automático dos dados de tiles do sprite para a VRAM.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>TRUE para ativar o upload automático; FALSE para desativá-lo (você passa a ser responsável pelo upload).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setDelayedFrameUpdate-legacy">
+<h4><code>void SPR_setDelayedFrameUpdate(Sprite* sprite, bool value)</code></h4>
+<p>Ativa/desativa o adiamento da atualização de frame quando o DMA fica sem capacidade de transferência.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td>TRUE para ativar o adiamento (padrão); FALSE para atualização sempre imediata, com risco de glitches gráficos (atualização durante o display ativo).</td></tr></table>
+<p class="note">Ver também <code>SPR_FLAG_DISABLE_DELAYED_FRAME_UPDATE</code>.</p>
+</article>
+<article class="fn" id="fn-SPR_setFrameChangeCallback-legacy">
+<h4><code>void SPR_setFrameChangeCallback(Sprite* sprite, FrameChangeCallback* callback)</code></h4>
+<p>Define o callback de troca de frame do sprite, chamado durante <code>SPR_update()</code> quando o frame muda (cuidado: <code>sprite-&gt;status</code> não está atualizado nesse ponto). Permite aplicar comportamento especial na troca de frame.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>callback</code></td><td>Ponteiro de função a chamar na troca de frame (ver <code>FrameChangeCallback</code>).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_getVisibility-legacy">
+<h4><code>SpriteVisibility SPR_getVisibility(Sprite* sprite)</code></h4>
+<p>Retorna o estado de <em>visibility</em> configurado (<code>VISIBLE</code>, <code>HIDDEN</code>, <code>AUTO_FAST</code> ou <code>AUTO_SLOW</code>). Atenção: diferente de <code>SPR_isVisible(..)</code>, que retorna a visibilidade efetiva.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o estado de <em>visibility</em> do sprite.</p>
+</article>
+<article class="fn" id="fn-SPR_isVisible-legacy">
+<h4><code>bool SPR_isVisible(Sprite* sprite, bool recompute)</code></h4>
+<p>Retorna o estado <em>visível</em> efetivo do sprite (significativo apenas com visibilidade AUTO). Apenas a posição X é usada para determinar a visibilidade.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite consultado.</td></tr>
+<tr><td><code>recompute</code></td><td>Força o recálculo da visibilidade; só é necessário se <code>SPR_update()</code> não foi chamado desde a última mudança de posição (pode forçar o processamento de atualização de frame).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> TRUE se o sprite está visível, FALSE caso contrário.</p>
+</article>
+<article class="fn" id="fn-SPR_setVisibility-legacy">
+<h4><code>void SPR_setVisibility(Sprite* sprite, SpriteVisibility value)</code></h4>
+<p>Define o estado de <em>visibility</em> do sprite. Ocultar um sprite evita que ele consuma o orçamento de sprites por scanline do VDP (máx. 20 sprites ou 320 px por scanline; 16 sprites/256 px em H32) — quando não visível, sua posição é levada para fora da tela <em>verticalmente</em>, e só o teste da coordenada X é usado na determinação.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>sprite</code></td><td>Sprite alvo.</td></tr>
+<tr><td><code>value</code></td><td><code>VISIBLE</code>, <code>HIDDEN</code>, <code>AUTO_FAST</code> (automática global, só posição X) ou <code>AUTO_SLOW</code> (automática por sprite de hardware, só posição X).</td></tr></table>
+</article>
+<article class="fn" id="fn-SPR_setAlwaysVisible-legacy">
+<h4><code>SPR_setAlwaysVisible(sprite, value)</code> <em>(macro, obsoleta)</em></h4>
+<p>Macro obsoleta (deprecated). Seu uso gera erro de compilação via <code>_Pragma("GCC error ...")</code>.</p>
+<p class="note">Use <code>SPR_setVisibility(..)</code> em seu lugar.</p>
+</article>
+<article class="fn" id="fn-SPR_setNeverVisible-legacy">
+<h4><code>SPR_setNeverVisible(sprite, value)</code> <em>(macro, obsoleta)</em></h4>
+<p>Macro obsoleta (deprecated). Seu uso gera erro de compilação via <code>_Pragma("GCC error ...")</code>.</p>
+<p class="note">Use <code>SPR_setVisibility(..)</code> em seu lugar.</p>
+</article>
+<article class="fn" id="fn-SPR_computeVisibility-legacy">
+<h4><code>SPR_computeVisibility(sprite)</code> <em>(macro, obsoleta)</em></h4>
+<p>Macro obsoleta (deprecated). Seu uso gera erro de compilação via <code>_Pragma("GCC error ...")</code>.</p>
+<p class="note">Use <code>SPR_isVisible(sprite, TRUE)</code> em seu lugar.</p>
+</article>
+<article class="fn" id="fn-SPR_clear-legacy">
+<h4><code>void SPR_clear(void)</code></h4>
+<p>Limpa todos os sprites exibidos, sem liberar seus recursos; eles voltam a ser exibidos ao chamar <code>SPR_update()</code>.</p>
+</article>
+<article class="fn" id="fn-SPR_update-legacy">
+<h4><code>void SPR_update(void)</code></h4>
+<p>Atualiza e exibe a lista de sprites ativos: atualiza os estados internos e prepara o cache da lista de sprites para envio ao hardware (VDP) no V-Int.</p>
+</article>
+<article class="fn" id="fn-SPR_logProfil-legacy">
+<h4><code>void SPR_logProfil(void)</code></h4>
+<p>Registra as informações de profiling do motor (quando habilitadas) na janela de mensagens do KMod.</p>
+</article>
+<article class="fn" id="fn-SPR_logSprites-legacy">
+<h4><code>void SPR_logSprites(void)</code></h4>
+<p>Registra as informações dos sprites (quando habilitadas) na janela de mensagens do KMod.</p>
+</article>
+</div>
+</section>

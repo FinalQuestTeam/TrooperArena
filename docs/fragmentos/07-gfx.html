@@ -1,0 +1,496 @@
+<section class="module" id="mod-bmp">
+<h2>bmp.h <span class="subtitle">Motor de bitmap por software</span></h2>
+<p class="mod-desc">Este módulo simula um <em>modo bitmap</em> no Mega Drive/Genesis — hardware que, nativamente, só trabalha com tiles e sprites. O motor emula uma tela bitmap de 256&times;160 pixels (4bpp, 16 cores) desenhada em RAM e transferida para a VRAM durante os períodos de <em>blank</em>. Ele usa duplo buffer em memória principal: você desenha no buffer de escrita enquanto o buffer de leitura é enviado ao vídeo. Para acelerar a transferência, a área ativa da tela é reduzida (scanlines 32–191 ativas, o resto vira blank estendido), permitindo cerca de 20 atualizações por segundo em NTSC e 25 em PAL.</p>
+<p class="mod-desc"><strong>Custo:</strong> o motor aloca dinamicamente cerca de 41 KB de RAM em <code>BMP_init()</code> (liberados em <code>BMP_end()</code>) e consome praticamente toda a VRAM de tiles quando o duplo buffer de VRAM é ativado. Todo o desenho é feito pela CPU (pixel a pixel), portanto é lento comparado ao modo tile normal. Use-o apenas quando realmente precisar de gráficos por pixel: renderização 3D em wireframe/polígonos, efeitos procedurais, plotagem de gráficos etc. Para jogos 2D convencionais, prefira os sistemas de tiles/sprites (vdp_tile.h, sprite_eng.h, map.h).</p>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>BMP_PLANE_WIDTH</code> / <code>BMP_PLANE_HEIGHT</code></td><td>64 / 64</td><td>Dimensões do plano usado pelo bitmap (em tiles).</td></tr>
+<tr><td><code>BMP_TILE_WIDTH</code> / <code>BMP_TILE_HEIGHT</code></td><td>32 / 20</td><td>Dimensões do bitmap em tiles.</td></tr>
+<tr><td><code>BMP_XPIXPERTILE</code> / <code>BMP_YPIXPERTILE</code></td><td>8 / 8</td><td>Pixels por tile em X e Y.</td></tr>
+<tr><td><code>BMP_WIDTH</code> / <code>BMP_HEIGHT</code></td><td>256 / 160</td><td>Dimensões do bitmap em pixels.</td></tr>
+<tr><td><code>BMP_PITCH</code></td><td>128</td><td>Pitch de scanline: número de bytes por linha do bitmap (2 pixels de 4 bits por byte).</td></tr>
+<tr><td><code>BMP_TILE_XOFFSET</code> / <code>BMP_TILE_YOFFSET</code></td><td>calculado</td><td>Offset (em tiles) para centralizar o bitmap na resolução de tela atual.</td></tr>
+<tr><td><code>BMP_*_SFT</code> / <code>BMP_*_MASK</code></td><td>diversos</td><td>Família de shifts e máscaras derivados (<code>BMP_TILE_WIDTH_SFT</code>, <code>BMP_WIDTH_MASK</code>, <code>BMP_PITCH_SFT</code> etc.) para cálculo rápido de endereços.</td></tr>
+<tr><td><code>BMP_BASE_TILE_INDEX</code>, <code>BMP_FB0_TILE_INDEX</code>, <code>BMP_FB1_TILE_INDEX</code>, <code>BMP_FB0_END_TILE_INDEX</code>, <code>BMP_FB1_END_TILE_INDEX</code>, <code>BMP_END_TILE_INDEX</code></td><td>derivados de <code>TILE_USER_INDEX</code></td><td>Índices de tile em VRAM dos dois framebuffers (FB0/FB1) usados pelo motor.</td></tr>
+<tr><td><code>BMP_BASE_ADDR</code>, <code>BMP_FB0_ADDR</code>, <code>BMP_FB1_ADDR</code>, <code>BMP_END_ADDR</code></td><td>índice &times; 32</td><td>Endereços correspondentes em VRAM (cada tile ocupa 32 bytes).</td></tr>
+<tr><td><code>bmp_buffer_read</code> / <code>bmp_buffer_write</code></td><td>variáveis <code>extern u8*</code></td><td>Ponteiros para os buffers atuais de leitura e escrita do bitmap.</td></tr>
+<tr><td><code>BMP_GETPIXEL</code>, <code>BMP_SETPIXEL</code>, <code>BMP_loadBitmapData</code>, <code>BMP_loadBitmap</code>, <code>BMP_loadAndScaleBitmap</code>, <code>BMP_getBitmapPalette</code></td><td>obsoletos</td><td>Macros depreciadas que geram erro de compilação; use <code>BMP_getPixelFast</code>, <code>BMP_setPixelFast</code>, <code>BMP_drawBitmapData</code>, <code>BMP_drawBitmap</code>, <code>BMP_drawBitmapScaled</code> e <code>bitmap-&gt;palette</code>, respectivamente.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-Bitmap">
+<h4><code>Bitmap</code></h4>
+<p>Estrutura de bitmap 4bpp do Genesis, normalmente gerada pelo rescomp a partir de arquivos .bmp/.png. Se houver compressão, use <code>unpackBitmap()</code> para descompactar (ou deixe as funções <code>BMP_drawBitmap*</code> fazerem isso automaticamente).</p>
+<pre class="code">typedef struct
+{
+    u16 compression;        // tipo de compressão dos dados de imagem:
+                            // COMPRESSION_NONE, COMPRESSION_APLIB ou COMPRESSION_LZ4W
+    u16 w;                  // largura em pixels
+    u16 h;                  // altura em pixels
+    const Palette *palette; // dados da paleta (16 cores)
+    const u8 *image;        // dados da imagem, tamanho = (w * h / 2);
+                            // pode ser um ponteiro FAR (ver mapper.h)
+} Bitmap;</pre>
+</article>
+<article class="type" id="type-Pixel">
+<h4><code>Pixel</code></h4>
+<p>Definição de um pixel (coordenada + cor) para desenho em lote via <code>BMP_setPixels</code>.</p>
+<pre class="code">typedef struct
+{
+    Vect2D_s16 pt;  // coordenadas do pixel
+    u16 col;        // cor: deve preencher os 8 bits (0x0000, 0x0011, ...);
+                    // u16 usado por otimização de alinhamento
+} Pixel;</pre>
+</article>
+<article class="type" id="type-Line">
+<h4><code>Line</code></h4>
+<p>Definição de uma linha (segmento de reta) para <code>BMP_drawLine</code> / <code>BMP_clipLine</code>.</p>
+<pre class="code">typedef struct
+{
+    Vect2D_s16 pt1; // ponto inicial
+    Vect2D_s16 pt2; // ponto final
+    u16 col;        // cor (8 bits preenchidos: 0x0000, 0x0011, ...)
+} Line;</pre>
+</article>
+<article class="type" id="type-Triangle">
+<h4><code>Triangle</code></h4>
+<p>Definição de um triângulo (três vértices e cor de preenchimento).</p>
+<pre class="code">typedef struct
+{
+    Vect2D_s16 pt1; // primeiro ponto
+    Vect2D_s16 pt2; // segundo ponto
+    Vect2D_s16 pt3; // terceiro ponto
+    u16 col;        // cor (8 bits preenchidos: 0x00, 0x11, ...)
+} Triangle;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-BMP_GENBMP16_WIDTH">
+<h4><code>BMP_GENBMP16_WIDTH(genbmp16)</code></h4>
+<p>Macro funcional que obtém a largura de um objeto "genesis bitmap 16" (formato bruto de bitmap 16 cores, indexado como array de <code>u16</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>genbmp16</code></td><td>Ponteiro para os dados do genesis bitmap 16.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> largura do bitmap (primeiro elemento do array).</p>
+</article>
+<article class="fn" id="fn-BMP_GENBMP16_HEIGHT">
+<h4><code>BMP_GENBMP16_HEIGHT(genbmp16)</code></h4>
+<p>Macro funcional que obtém a altura de um objeto genesis bitmap 16.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>genbmp16</code></td><td>Ponteiro para os dados do genesis bitmap 16.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> altura do bitmap (segundo elemento do array).</p>
+</article>
+<article class="fn" id="fn-BMP_GENBMP16_PALETTE">
+<h4><code>BMP_GENBMP16_PALETTE(genbmp16)</code></h4>
+<p>Macro funcional que retorna um ponteiro para a paleta (16 entradas) de um objeto genesis bitmap 16.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>genbmp16</code></td><td>Ponteiro para os dados do genesis bitmap 16.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o início da paleta (offset 2 do array).</p>
+</article>
+<article class="fn" id="fn-BMP_GENBMP16_IMAGE">
+<h4><code>BMP_GENBMP16_IMAGE(genbmp16)</code></h4>
+<p>Macro funcional que retorna um ponteiro para os dados de imagem de um objeto genesis bitmap 16.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>genbmp16</code></td><td>Ponteiro para os dados do genesis bitmap 16.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o início dos dados de imagem (offset 18 do array, após tamanho e paleta).</p>
+</article>
+<article class="fn" id="fn-BMP_init">
+<h4><code>void BMP_init(u16 double_buffer, VDPPlane plane, u16 palette, u16 priority)</code></h4>
+<p>Inicializa o motor de bitmap por software. Aloca dinamicamente cerca de 41 KB de memória e configura o plano indicado para exibir o bitmap.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>double_buffer</code></td><td>Ativa o duplo buffer em VRAM, que evita <em>tearing</em> causado pela atualização parcial da tela. Consome quase todo o espaço de tiles da VRAM (~41 KB), portanto ative apenas se não precisar de outro plano nem de sprites.</td></tr>
+<tr><td><code>plane</code></td><td>Plano usado para exibir o bitmap: <code>BG_A</code> ou <code>BG_B</code>.</td></tr>
+<tr><td><code>palette</code></td><td>Índice de paleta usado para renderizar o plano do bitmap (use 0 em caso de dúvida).</td></tr>
+<tr><td><code>priority</code></td><td>Prioridade do plano do bitmap: 0 = baixa (padrão), 1 = alta.</td></tr></table>
+<p class="note">Requer ~41 KB de RAM alocados dinamicamente; libere com <code>BMP_end()</code>.</p>
+</article>
+<article class="fn" id="fn-BMP_end">
+<h4><code>void BMP_end(void)</code></h4>
+<p>Encerra o motor de bitmap por software e libera a memória usada por ele (~41 KB).</p>
+</article>
+<article class="fn" id="fn-BMP_reset">
+<h4><code>void BMP_reset(void)</code></h4>
+<p>Reinicializa o motor de bitmap: reconstrói o tilemap usado pelo motor e limpa os buffers.</p>
+</article>
+<article class="fn" id="fn-BMP_setBufferCopy">
+<h4><code>void BMP_setBufferCopy(u16 value)</code></h4>
+<p>Ativa/desativa a preservação do conteúdo entre buffers. Como o motor sempre usa duplo buffer em RAM, o conteúdo desenhado não é preservado de um frame para o outro (são dois buffers distintos). Com o "buffer copy" ativado o bitmap é copiado a cada <em>flip</em>, preservando o conteúdo, porém com custo de CPU significativo. Desativado por padrão por questão de desempenho.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>value</code></td><td>TRUE para ativar a cópia de buffer, FALSE para desativar.</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_flip">
+<h4><code>u16 BMP_flip(u16 async)</code></h4>
+<p>Envia (<em>blit</em>) o back buffer atual para a tela e troca os buffers (o back buffer vira front buffer e vice-versa). No modo assíncrono, a transferência para a VRAM acontece durante o período de blank e a função retorna imediatamente. Se já houver um flip em andamento, a nova solicitação fica pendente e será processada quando o flip atual terminar; se já houver uma solicitação pendente, a função espera até que não haja mais pendências.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>async</code></td><td>Flag de operação assíncrona.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> significativo apenas no modo assíncrono — 0 se a solicitação ficou pendente (outro flip em andamento), 1 se o flip foi iniciado.</p>
+<p class="note">Use <code>BMP_waitWhileFlipRequestPending()</code> para garantir que não haja flips pendentes antes de escrever no buffer do bitmap.</p>
+</article>
+<article class="fn" id="fn-BMP_clear">
+<h4><code>void BMP_clear(void)</code></h4>
+<p>Limpa o buffer de escrita do bitmap.</p>
+</article>
+<article class="fn" id="fn-BMP_getWritePointer">
+<h4><code>u8* BMP_getWritePointer(u16 x, u16 y)</code></h4>
+<p>Obtém o ponteiro de escrita para o pixel especificado no buffer de escrita.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Coordenada X do pixel.</td></tr><tr><td><code>y</code></td><td>Coordenada Y do pixel.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o byte que contém o pixel.</p>
+<p class="note">Como os pixels são de 4 bits (2 por byte), <code>BMP_getWritePointer(0,0)</code> e <code>BMP_getWritePointer(1,0)</code> retornam o mesmo endereço.</p>
+</article>
+<article class="fn" id="fn-BMP_getReadPointer">
+<h4><code>u8* BMP_getReadPointer(u16 x, u16 y)</code></h4>
+<p>Obtém o ponteiro de leitura para o pixel especificado no buffer de leitura.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Coordenada X do pixel.</td></tr><tr><td><code>y</code></td><td>Coordenada Y do pixel.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> ponteiro para o byte que contém o pixel.</p>
+<p class="note">Como os pixels são de 4 bits, <code>BMP_getReadPointer(0,0)</code> e <code>BMP_getReadPointer(1,0)</code> retornam o mesmo endereço.</p>
+</article>
+<article class="fn" id="fn-BMP_hasFlipRequestPending">
+<h4><code>u16 BMP_hasFlipRequestPending(void)</code></h4>
+<p>Verifica se há uma solicitação de flip pendente.</p>
+<p class="returns"><strong>Retorna:</strong> valor verdadeiro (!= 0) se existir flip pendente.</p>
+</article>
+<article class="fn" id="fn-BMP_waitWhileFlipRequestPending">
+<h4><code>void BMP_waitWhileFlipRequestPending(void)</code></h4>
+<p>Bloqueia até que não haja mais nenhuma solicitação de flip pendente.</p>
+</article>
+<article class="fn" id="fn-BMP_hasFlipInProgess">
+<h4><code>u16 BMP_hasFlipInProgess(void)</code></h4>
+<p>Verifica se uma operação de flip está em andamento.</p>
+<p class="returns"><strong>Retorna:</strong> valor verdadeiro (!= 0) se um flip estiver em progresso.</p>
+</article>
+<article class="fn" id="fn-BMP_waitFlipComplete">
+<h4><code>void BMP_waitFlipComplete(void)</code></h4>
+<p>Aguarda a conclusão da operação de flip assíncrona (a transferência do buffer de bitmap para a VRAM).</p>
+</article>
+<article class="fn" id="fn-BMP_drawText">
+<h4><code>void BMP_drawText(const char *str, u16 x, u16 y)</code></h4>
+<p>Desenha texto no modo bitmap.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>str</code></td><td>String a exibir.</td></tr><tr><td><code>x</code></td><td>Coordenada X (em tiles).</td></tr><tr><td><code>y</code></td><td>Coordenada Y (em tiles).</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_clearText">
+<h4><code>void BMP_clearText(u16 x, u16 y, u16 w)</code></h4>
+<p>Apaga texto no modo bitmap.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Coordenada X (em tiles).</td></tr><tr><td><code>y</code></td><td>Coordenada Y (em tiles).</td></tr><tr><td><code>w</code></td><td>Número de caracteres a apagar.</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_clearTextLine">
+<h4><code>void BMP_clearTextLine(u16 y)</code></h4>
+<p>Apaga uma linha inteira de texto no modo bitmap.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>y</code></td><td>Coordenada Y (em tiles).</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_showFPS">
+<h4><code>void BMP_showFPS(u16 float_display, u16 x, u16 y)</code></h4>
+<p>Exibe a taxa de quadros (FPS) no modo bitmap.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>float_display</code></td><td>Se verdadeiro (!= 0), o FPS é exibido em ponto flutuante; caso contrário, como inteiro.</td></tr><tr><td><code>x</code></td><td>Coordenada X (em tiles).</td></tr><tr><td><code>y</code></td><td>Coordenada Y (em tiles).</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_getPixel">
+<h4><code>u8 BMP_getPixel(u16 x, u16 y)</code></h4>
+<p>Lê o pixel na posição especificada (versão segura, com verificação de limites).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Coordenada X.</td></tr><tr><td><code>y</code></td><td>Coordenada Y.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor do pixel.</p>
+<p class="note">Veja também <code>BMP_getPixelFast</code> e <code>BMP_setPixel</code>.</p>
+</article>
+<article class="fn" id="fn-BMP_getPixelFast">
+<h4><code>u8 BMP_getPixelFast(u16 x, u16 y)</code></h4>
+<p>Lê o pixel na posição especificada (versão rápida, sem verificação de limites).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Coordenada X.</td></tr><tr><td><code>y</code></td><td>Coordenada Y.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> valor do pixel.</p>
+<p class="note">Coordenadas fora dos limites causam leitura em memória inválida. Substitui a antiga macro <code>BMP_GETPIXEL</code>.</p>
+</article>
+<article class="fn" id="fn-BMP_setPixel">
+<h4><code>void BMP_setPixel(u16 x, u16 y, u8 col)</code></h4>
+<p>Grava um pixel na posição especificada (versão segura, com verificação de limites).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Coordenada X do pixel.</td></tr><tr><td><code>y</code></td><td>Coordenada Y do pixel.</td></tr><tr><td><code>col</code></td><td>Cor do pixel — deve preencher os 8 bits (0x00, 0x11, 0x22, ... para cor sólida).</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_setPixelFast">
+<h4><code>void BMP_setPixelFast(u16 x, u16 y, u8 col)</code></h4>
+<p>Grava um pixel na posição especificada (versão rápida, sem verificação de limites).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>x</code></td><td>Coordenada X do pixel.</td></tr><tr><td><code>y</code></td><td>Coordenada Y do pixel.</td></tr><tr><td><code>col</code></td><td>Cor do pixel — deve preencher os 8 bits (0x00, 0x11, ...).</td></tr></table>
+<p class="note">Substitui a antiga macro <code>BMP_SETPIXEL</code>.</p>
+</article>
+<article class="fn" id="fn-BMP_setPixels_V2D">
+<h4><code>void BMP_setPixels_V2D(const Vect2D_u16 *crd, u8 col, u16 num)</code></h4>
+<p>Grava vários pixels de mesma cor a partir de um array de coordenadas <code>Vect2D_u16</code> (versão segura, com verificação de limites).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>crd</code></td><td>Buffer de coordenadas <code>Vect2D_u16</code>.</td></tr><tr><td><code>col</code></td><td>Cor dos pixels (8 bits preenchidos: 0x00, 0x11, ...).</td></tr><tr><td><code>num</code></td><td>Número de pixels a desenhar (tamanho do buffer de coordenadas).</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_setPixelsFast_V2D">
+<h4><code>void BMP_setPixelsFast_V2D(const Vect2D_u16 *crd, u8 col, u16 num)</code></h4>
+<p>Grava vários pixels de mesma cor a partir de um array de coordenadas <code>Vect2D_u16</code> (versão rápida, sem verificação de limites).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>crd</code></td><td>Buffer de coordenadas <code>Vect2D_u16</code>.</td></tr><tr><td><code>col</code></td><td>Cor dos pixels (8 bits preenchidos).</td></tr><tr><td><code>num</code></td><td>Número de pixels a desenhar.</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_setPixels">
+<h4><code>void BMP_setPixels(const Pixel *pixels, u16 num)</code></h4>
+<p>Grava vários pixels a partir de um array de <code>Pixel</code> (cada um com coordenada e cor próprias); versão segura, com verificação de limites.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pixels</code></td><td>Buffer de estruturas <code>Pixel</code>.</td></tr><tr><td><code>num</code></td><td>Número de pixels a desenhar (tamanho do buffer).</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_setPixelsFast">
+<h4><code>void BMP_setPixelsFast(const Pixel *pixels, u16 num)</code></h4>
+<p>Grava vários pixels a partir de um array de <code>Pixel</code> (versão rápida, sem verificação de limites).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pixels</code></td><td>Buffer de estruturas <code>Pixel</code>.</td></tr><tr><td><code>num</code></td><td>Número de pixels a desenhar.</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_clipLine">
+<h4><code>u16 BMP_clipLine(Line *l)</code></h4>
+<p>Recorta (clipa) a linha especificada para que ela caiba na tela do bitmap (0, 0, <code>BMP_WIDTH</code>, <code>BMP_HEIGHT</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>l</code></td><td>Linha a recortar (modificada no local, se necessário).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE (0) se a linha está totalmente fora da tela (nenhum recorte é feito); TRUE se ao menos um pixel está na tela (a linha é recortada quando preciso).</p>
+</article>
+<article class="fn" id="fn-BMP_drawLine">
+<h4><code>void BMP_drawLine(Line *l)</code></h4>
+<p>Desenha uma linha, sem verificação de limites. Use <code>BMP_clipLine(..)</code> antes, se precisar restringir a linha à área visível.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>l</code></td><td>Linha a desenhar.</td></tr></table>
+</article>
+<article class="fn" id="fn-BMP_isPolygonCulled">
+<h4><code>u16 BMP_isPolygonCulled(const Vect2D_s16 *pts, u16 num)</code></h4>
+<p>Determina se o polígono especificado sofre <em>culling</em>. Os pontos do polígono devem estar em ordem horária; a função indica se o polígono está de costas (back-face) e deve ser eliminado na renderização 3D.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pts</code></td><td>Buffer de pontos do polígono.</td></tr><tr><td><code>num</code></td><td>Número de pontos (tamanho do buffer).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 1 se o polígono é eliminado (não deve ser desenhado), 0 caso contrário.</p>
+</article>
+<article class="fn" id="fn-BMP_drawPolygon">
+<h4><code>u16 BMP_drawPolygon(const Vect2D_s16 *pts, u16 num, u8 col)</code></h4>
+<p>Desenha um polígono preenchido. Os pontos devem estar em ordem horária. Use <code>BMP_isPolygonCulled(..)</code> para testar se o polígono deve ou não ser desenhado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pts</code></td><td>Buffer de pontos do polígono.</td></tr><tr><td><code>num</code></td><td>Número de pontos (tamanho do buffer).</td></tr><tr><td><code>col</code></td><td>Cor de preenchimento.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> 0 se o polígono não foi desenhado (fora da tela, por exemplo).</p>
+</article>
+<article class="fn" id="fn-BMP_drawBitmapData">
+<h4><code>void BMP_drawBitmapData(const u8 *data, u16 x, u16 y, u16 w, u16 h, u32 pitch)</code></h4>
+<p>Desenha dados brutos de bitmap 4BPP no buffer.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>data</code></td><td>Buffer de dados de imagem 4BPP.</td></tr><tr><td><code>x</code></td><td>Coordenada X (deve ser par, por alinhamento de byte).</td></tr><tr><td><code>y</code></td><td>Coordenada Y.</td></tr><tr><td><code>w</code></td><td>Largura (deve ser par, por alinhamento de byte).</td></tr><tr><td><code>h</code></td><td>Altura.</td></tr><tr><td><code>pitch</code></td><td>Pitch do bitmap (bytes por scanline da origem).</td></tr></table>
+<p class="note">X e largura são alinhados a valores pares por desempenho: <code>BMP_drawBitmapData(data,0,0,w,h,w)</code> produz o mesmo resultado que <code>BMP_drawBitmapData(data,1,0,w,h,w)</code>.</p>
+</article>
+<article class="fn" id="fn-BMP_drawBitmap">
+<h4><code>bool BMP_drawBitmap(const Bitmap *bitmap, u16 x, u16 y, bool loadpal)</code></h4>
+<p>Desenha um Genesis Bitmap (recurso criado automaticamente a partir de .bmp/.png pelo rescomp, contendo dimensões e paleta de 16 cores). O bitmap é descompactado "na hora", se necessário (requer memória).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>bitmap</code></td><td>Genesis Bitmap a desenhar.</td></tr><tr><td><code>x</code></td><td>Coordenada X (deve ser par).</td></tr><tr><td><code>y</code></td><td>Coordenada Y.</td></tr><tr><td><code>loadpal</code></td><td>Se TRUE, carrega também a paleta do bitmap.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se não houver memória suficiente para descompactar o bitmap (apenas quando a compressão está habilitada).</p>
+<p class="note">A coordenada X é alinhada a valor par por desempenho: <code>BMP_drawBitmap(bitmap,0,0,TRUE)</code> equivale a <code>BMP_drawBitmap(bitmap,1,0,TRUE)</code>.</p>
+</article>
+<article class="fn" id="fn-BMP_drawBitmapScaled">
+<h4><code>bool BMP_drawBitmapScaled(const Bitmap *bitmap, u16 x, u16 y, u16 w, u16 h, bool loadpal)</code></h4>
+<p>Carrega e desenha um Genesis Bitmap redimensionado (escalado) para as dimensões especificadas. O bitmap é descompactado "na hora", se necessário.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>bitmap</code></td><td>Genesis Bitmap a desenhar.</td></tr><tr><td><code>x</code></td><td>Coordenada X (deve ser par).</td></tr><tr><td><code>y</code></td><td>Coordenada Y.</td></tr><tr><td><code>w</code></td><td>Largura final.</td></tr><tr><td><code>h</code></td><td>Altura final.</td></tr><tr><td><code>loadpal</code></td><td>Se TRUE, carrega também a paleta do bitmap.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> FALSE se não houver memória suficiente para descompactar o bitmap (apenas quando a compressão está habilitada).</p>
+<p class="note">X e largura são alinhados a valores pares por desempenho.</p>
+</article>
+<article class="fn" id="fn-BMP_scale">
+<h4><code>void BMP_scale(const u8 *src_buf, u16 src_wb, u16 src_h, u16 src_pitch, u8 *dst_buf, u16 dst_wb, u16 dst_h, u16 dst_pitch)</code></h4>
+<p>Redimensiona (escala) uma imagem bitmap de origem, com dimensões dadas, para um buffer de destino com as dimensões especificadas.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>src_buf</code></td><td>Buffer do bitmap de origem.</td></tr><tr><td><code>src_wb</code></td><td>Largura da origem em bytes.</td></tr><tr><td><code>src_h</code></td><td>Altura da origem.</td></tr><tr><td><code>src_pitch</code></td><td>Pitch da origem (bytes por scanline).</td></tr><tr><td><code>dst_buf</code></td><td>Buffer do bitmap de destino.</td></tr><tr><td><code>dst_wb</code></td><td>Largura do destino em bytes.</td></tr><tr><td><code>dst_h</code></td><td>Altura do destino.</td></tr><tr><td><code>dst_pitch</code></td><td>Pitch do destino (bytes por scanline).</td></tr></table>
+</article>
+</section>
+
+<section class="module" id="mod-map">
+<h2>map.h <span class="subtitle">Mapas grandes com scrolling e streaming de tiles</span></h2>
+<p class="mod-desc">Este módulo gerencia <em>mapas de fundo grandes</em> (níveis maiores que a tela) com um motor de scrolling que faz o <em>streaming</em> de tiles sob demanda: ao chamar <code>MAP_scrollTo(..)</code>, apenas as novas linhas/colunas de tilemap que entram na área visível são preparadas e enviadas à VRAM pela fila de DMA, e o registro de scroll do VDP é ajustado automaticamente no VBlank (dentro de <code>SYS_doVBlankProcess()</code>). Assim é possível percorrer fundos enormes gastando pouca VRAM e pouca banda de transferência por frame.</p>
+<p class="mod-desc">O recurso MAP (gerado pelo rescomp) codifica a imagem grande como uma estrutura <code>MapDefinition</code> altamente compactada: o mapa é uma grade de blocos de 128&times;128 pixels (blocos duplicados guardam só uma referência); cada bloco é uma grade 8&times;8 de <em>metatiles</em>; cada metatile é um bloco de 16&times;16 pixels (2&times;2 tiles), com deduplicação de metatiles repetidos ou espelhados. Ao desenhar o fundo do seu nível, procure maximizar a repetição de blocos 128&times;128 para reduzir o tamanho do recurso. Além do scrolling, o módulo oferece funções de consulta (<code>MAP_getTile</code>, <code>MAP_getMetaTile</code>, ...) úteis para colisão e lógica de jogo, e um callback de <em>patch</em> para modificar o tilemap antes do envio à VRAM (blocos destrutíveis, por exemplo).</p>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-MapUpdateType">
+<h4><code>MapUpdateType</code></h4>
+<p>Tipo de atualização dos dados do mapa, informado ao callback de patch.</p>
+<pre class="code">typedef enum
+{
+    ROW_UPDATE,    // atualização de linha do tilemap
+    COLUMN_UPDATE  // atualização de coluna do tilemap
+} MapUpdateType;</pre>
+</article>
+<article class="type" id="type-MapDataPatchCallback">
+<h4><code>MapDataPatchCallback</code></h4>
+<p>Assinatura do callback de patch de dados do mapa. É usado para modificar/corrigir os dados do tilemap (por exemplo, blocos destrutíveis) antes de serem enviados à VRAM.</p>
+<pre class="code">typedef void MapDataPatchCallback(
+    Map *map,                 // estrutura Map de origem
+    u16 *buf,                 // buffer com os dados de tilemap a corrigir
+    u16 x,                    // posição X inicial da atualização (em tiles)
+    u16 y,                    // posição Y inicial da atualização (em tiles)
+    MapUpdateType updateType, // ROW_UPDATE ou COLUMN_UPDATE
+    u16 size                  // tamanho do buffer (largura ou altura do
+                              // tilemap, conforme o tipo de atualização)
+);</pre>
+</article>
+<article class="type" id="type-MapDefinition">
+<h4><code>MapDefinition</code></h4>
+<p>Estrutura com os dados de um fundo de nível grande, otimizada para codificar mapas extensos em blocos de 128&times;128 pixels organizados em metatiles. Normalmente gerada pelo rescomp a partir do recurso MAP.</p>
+<pre class="code">typedef struct
+{
+    u16 w;                // largura do mapa em blocos (128x128 pixels)
+    u16 h;                // altura do mapa em blocos (128x128 pixels)
+    u16 hp;               // altura em blocos removendo linhas duplicadas
+    u16 compression;      // b0-b3 = compressão dos metaTiles,
+                          // b4-b7 = compressão dos blocks,
+                          // b8-b11 = compressão dos blockIndexes
+                          // (COMPRESSION_NONE / APLIB / LZ4W)
+    u16 numMetaTile;      // número de metatiles
+    u16 numBlock;         // número de blocos (chunks de 128x128 pixels)
+    u16 *metaTiles;       // metatiles (blocos 2x2 tiles); cada entrada:
+                          // b15 = prioridade, b14-b13 = paleta,
+                          // b12 = vflip, b11 = hflip, b10-b0 = índice do tile
+    void* blocks;         // blocos (8x8 metatiles); índice de 8 bits se
+                          // numMetaTile &lt;= 256, senão 16 bits
+    void* blockIndexes;   // índices de bloco para o mapa w * hp; índice de
+                          // 8 bits se numBlock &lt;= 256, senão 16 bits
+    u16* blockRowOffsets; // offsets de linha de bloco (uso interno):
+                          // index = blockIndexes[blockRowOffsets[y] + x]
+} MapDefinition;</pre>
+</article>
+<article class="type" id="type-Map">
+<h4><code>Map</code></h4>
+<p>Estrutura de trabalho criada por <code>MAP_create(..)</code> a partir de uma <code>MapDefinition</code>; contém o estado do scrolling e os dados descompactados usados pelas funções <code>MAP_xxx</code>.</p>
+<pre class="code">typedef struct Map
+{
+    u16 w;                 // largura do mapa em blocos (128x128 pixels)
+    u16 h;                 // altura do mapa em blocos (128x128 pixels)
+    u16* metaTiles;        // interno - dados descompactados de MapDefinition.metaTiles
+    void* blocks;          // interno - dados descompactados de MapDefinition.blocks
+    void* blockIndexes;    // interno - dados descompactados de MapDefinition.blockIndexes
+    u16* blockRowOffsets;  // interno - acesso direto a MapDefinition.blockRowOffsets
+    VDPPlane plane;        // plano do VDP onde o MAP é desenhado
+    u16 baseTile;          // atributos base (offset de índice de tile e
+                           // paleta base, ver TILE_ATTR_FULL())
+    u32 posX;              // posição X atual da vista (via MAP_scrollTo)
+    u32 posY;              // posição Y atual da vista (via MAP_scrollTo)
+    // ... campos internos: máscaras/shifts de plano, lastXT/lastYT,
+    // hScrollTable[240], vScrollTable[20] e callbacks internos de
+    // preparação/patch/consulta (prepareMapDataColumnCB, prepareMapDataRowCB,
+    // mapDataPatchCB, getMetaTileCB, getMetaTilemapRectCB)
+} Map;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-MAP_create">
+<h4><code>Map* MAP_create(const MapDefinition* mapDef, VDPPlane plane, u16 baseTile)</code></h4>
+<p>Cria e retorna a estrutura <code>Map</code> necessária para usar as demais funções <code>MAP_xxx</code>, a partir de uma <code>MapDefinition</code>. Ao terminar de usar o mapa, libere-o com <code>MAP_release(map)</code>.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr>
+<tr><td><code>mapDef</code></td><td>Estrutura <code>MapDefinition</code> com os dados do fundo/plano.</td></tr>
+<tr><td><code>plane</code></td><td>Plano onde o mapa será desenhado (para <code>MAP_scrollTo(..)</code>): <code>BG_A</code> ou <code>BG_B</code>. Se for usar o mapa apenas para colisão ou lógica (via <code>MAP_getTile(..)</code>), pode deixar 0.</td></tr>
+<tr><td><code>baseTile</code></td><td>Fornece o índice de tile base e a paleta base (ver macro <code>TILE_ATTR_FULL()</code>). Pode também forçar prioridade HIGH, mas nesse caso o mapa deve conter apenas tiles LOW, senão os tiles HIGH serão rebaixados para LOW (os modos são mutuamente exclusivos).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> estrutura <code>Map</code> inicializada, ou <em>NULL</em> se não houver memória suficiente para os dados da <code>MapDefinition</code>.</p>
+</article>
+<article class="fn" id="fn-MAP_release">
+<h4><code>void MAP_release(Map* map)</code></h4>
+<p>Libera o mapa e seus recursos (equivalente a <code>MEM_free(map)</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>map</code></td><td>Estrutura <code>Map</code> a liberar.</td></tr></table>
+</article>
+<article class="fn" id="fn-MAP_scrollTo">
+<h4><code>void MAP_scrollTo(Map* map, u32 x, u32 y)</code></h4>
+<p>Rola o mapa até a posição especificada. A função cuida da atualização do tilemap do VDP (transferido pela fila de DMA) e o scroll de fundo do VDP é aplicado automaticamente no VBlank (dentro das tarefas de <code>SYS_doVBlankProcess()</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>map</code></td><td>Estrutura <code>Map</code> de origem.</td></tr><tr><td><code>x</code></td><td>Posição X da vista desejada.</td></tr><tr><td><code>y</code></td><td>Posição Y da vista desejada.</td></tr></table>
+<p class="note"><strong>Atenção:</strong> a primeira chamada a <code>MAP_scrollTo(..)</code> faz uma atualização completa do plano — para um plano 64&times;32 isso representa 4 KB de dados. Como o limite é de ~7,2 KB por frame, não é possível inicializar 2 MAPs no mesmo frame; chame <code>SYS_doVBlankProcess()</code> entre as inicializações.</p>
+</article>
+<article class="fn" id="fn-MAP_scrollToEx">
+<h4><code>void MAP_scrollToEx(Map* map, u32 x, u32 y, bool forceRedraw)</code></h4>
+<p>Igual a <code>MAP_scrollTo(..)</code>, mas permite forçar o redesenho completo do mapa.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>map</code></td><td>Estrutura <code>Map</code> de origem.</td></tr><tr><td><code>x</code></td><td>Posição X da vista desejada.</td></tr><tr><td><code>y</code></td><td>Posição Y da vista desejada.</td></tr><tr><td><code>forceRedraw</code></td><td><em>TRUE</em> força o redesenho completo do mapa (mais demorado).</td></tr></table>
+</article>
+<article class="fn" id="fn-MAP_getMetaTile">
+<h4><code>u16 MAP_getMetaTile(Map* map, u16 x, u16 y)</code></h4>
+<p>Retorna o índice do metatile na posição indicada (um metatile é um bloco de 2&times;2 tiles = 16&times;16 pixels). Útil para colisões baseadas em blocos de 16&times;16.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>map</code></td><td>Estrutura <code>Map</code> de origem.</td></tr><tr><td><code>x</code></td><td>Posição X do metatile (bloco de 16&times;16 pixels).</td></tr><tr><td><code>y</code></td><td>Posição Y do metatile (bloco de 16&times;16 pixels).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> índice do metatile.</p>
+</article>
+<article class="fn" id="fn-MAP_getTile">
+<h4><code>u16 MAP_getTile(Map* map, u16 x, u16 y)</code></h4>
+<p>Retorna o atributo do tile na posição indicada (note que <code>map-&gt;baseTile</code> não é somado ao resultado).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>map</code></td><td>Estrutura <code>Map</code> de origem.</td></tr><tr><td><code>x</code></td><td>Posição X do tile.</td></tr><tr><td><code>y</code></td><td>Posição Y do tile.</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> atributo do tile — b15: prioridade; b14–b13: paleta; b12: vflip; b11: hflip; b10–b0: índice do tile.</p>
+</article>
+<article class="fn" id="fn-MAP_getMetaTilemapRect">
+<h4><code>void MAP_getMetaTilemapRect(Map* map, u16 x, u16 y, u16 w, u16 h, u16* dest)</code></h4>
+<p>Obtém os índices dos metatiles da região especificada (um metatile é um bloco de 2&times;2 tiles = 16&times;16 pixels) e grava-os no buffer de destino.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>map</code></td><td>Estrutura <code>Map</code> de origem.</td></tr><tr><td><code>x</code></td><td>Posição X inicial da região (em metatiles — blocos de 16&times;16 pixels).</td></tr><tr><td><code>y</code></td><td>Posição Y inicial da região (em metatiles).</td></tr><tr><td><code>w</code></td><td>Largura da região (em metatiles).</td></tr><tr><td><code>h</code></td><td>Altura da região (em metatiles).</td></tr><tr><td><code>dest</code></td><td>Ponteiro de destino que recebe os dados dos metatiles.</td></tr></table>
+</article>
+<article class="fn" id="fn-MAP_getTilemapRect">
+<h4><code>void MAP_getTilemapRect(Map* map, u16 x, u16 y, u16 w, u16 h, bool column, u16* dest)</code></h4>
+<p>Obtém os atributos de tile da região especificada, gravando-os no buffer de destino (<code>map-&gt;baseTile</code> é usado como atributo base, ver <code>MAP_create(..)</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>map</code></td><td>Estrutura <code>Map</code> de origem.</td></tr><tr><td><code>x</code></td><td>Posição X inicial da região <strong>(em metatiles)</strong>.</td></tr><tr><td><code>y</code></td><td>Posição Y inicial da região <strong>(em metatiles)</strong>.</td></tr><tr><td><code>w</code></td><td>Largura da região <strong>(em metatiles)</strong>.</td></tr><tr><td><code>h</code></td><td>Altura da região <strong>(em metatiles)</strong>.</td></tr><tr><td><code>column</code></td><td>Se TRUE, os dados são armazenados em ordem de coluna [Y,X] em vez de ordem de linha [X,Y].</td></tr><tr><td><code>dest</code></td><td>Ponteiro de destino que recebe os atributos dos tiles (b15: prioridade; b14–b13: paleta; b12: vflip; b11: hflip; b10–b0: índice do tile).</td></tr></table>
+</article>
+<article class="fn" id="fn-MAP_setDataPatchCallback">
+<h4><code>void MAP_setDataPatchCallback(Map* map, MapDataPatchCallback *CB)</code></h4>
+<p>Define a função de callback para "patch" dos dados do tilemap. O callback é chamado quando uma nova linha/coluna do tilemap está pronta para ser enviada ao VDP, permitindo modificar os dados antes do envio à VRAM — útil, por exemplo, para implementar blocos destrutíveis.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>map</code></td><td>Estrutura <code>Map</code> para a qual definir o callback.</td></tr><tr><td><code>CB</code></td><td>Callback de patch dos novos dados de tilemap (NULL por padrão = sem callback). Veja a declaração de <code>MapDataPatchCallback</code> para os parâmetros do callback.</td></tr></table>
+</article>
+<article class="fn" id="fn-MAP_overridePlaneSize">
+<h4><code>void MAP_overridePlaneSize(Map* map, u16 w, u16 h)</code></h4>
+<p>Sobrescreve, para este mapa, o tamanho de plano do sistema (VDP). Deve ser chamada após <code>MAP_create(..)</code>. Útil quando o tamanho de plano do VDP está em 64&times;64, mas você quer usar 64&times;32 para um plano e aproveitar a VRAM restante para outra coisa.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>map</code></td><td>Estrutura <code>Map</code> cujo tamanho de tilemap do VDP será sobrescrito.</td></tr><tr><td><code>w</code></td><td>Largura do tilemap (32, 64 ou 128).</td></tr><tr><td><code>h</code></td><td>Altura do tilemap (32, 64 ou 128).</td></tr></table>
+</article>
+</section>
+
+<section class="module" id="mod-object">
+<h2>object.h <span class="subtitle">Mini framework de objetos/entidades de jogo</span></h2>
+<p class="mod-desc">Este módulo fornece um mini framework para gerenciar <em>objetos de jogo</em> (entidades, inimigos, personagens, projéteis...). Ele trabalha em conjunto com a unidade <code>pool.h</code>, que provê a alocação dinâmica dos objetos em <em>pools</em> de tamanho fixo — abordagem ideal no Mega Drive, onde alocação dinâmica genérica é cara e fragmenta memória.</p>
+<p class="mod-desc">A ideia é usar <code>Object</code> como estrutura base do seu próprio tipo: declare sua struct embutindo um <code>Object</code> (pode ser anônimo) <strong>sempre na primeira posição</strong>. Assim sua entidade pode ser manipulada pelas funções <code>OBJ_xxx</code>, com ciclo de vida em três callbacks: <code>init</code> (uma vez após a criação), <code>update</code> (normalmente uma vez por frame, disparado em lote por <code>OBJ_updateAll</code>) e <code>end</code> (uma vez antes da liberação).</p>
+<pre class="code">struct entity_
+{
+    Object;          // estrutura base, sempre em primeiro
+    f32 posX;
+    f32 posY;
+    Sprite* sprite;
+    ...
+};</pre>
+<div class="defines">
+<h3>Constantes e macros</h3>
+<table class="def-table">
+<tr><th>Nome</th><th>Valor</th><th>Descrição</th></tr>
+<tr><td><code>OBJ_ALLOCATED</code></td><td><code>0x8000</code></td><td>Estado "alocado" do objeto (bit 15 de <code>internalState</code>), útil principalmente para depuração.</td></tr>
+</table>
+</div>
+<div class="types">
+<h3>Tipos</h3>
+<article class="type" id="type-ObjectCallback">
+<h4><code>ObjectCallback</code></h4>
+<p>Assinatura dos callbacks de objeto (<code>init</code>, <code>update</code> e <code>end</code>).</p>
+<pre class="code">typedef void ObjectCallback(Object* obj); // obj = objeto alvo do callback</pre>
+</article>
+<article class="type" id="type-Object">
+<h4><code>Object</code></h4>
+<p>Estrutura base de objeto, a ser embutida na primeira posição das suas próprias structs de entidade.</p>
+<pre class="code">typedef struct Object_
+{
+    u16 internalState;      // estado interno; pode ser usado livremente,
+                            // mas preserve o bit 15 (usado internamente
+                            // para detectar objeto inválido)
+    u16 type;               // tipo do objeto, para identificar a struct
+                            // concreta subjacente
+    ObjectCallback* init;   // callback de inicialização (chamado uma única
+                            // vez após a criação)
+    ObjectCallback* update; // callback de atualização (normalmente uma vez
+                            // por frame)
+    ObjectCallback* end;    // callback de finalização (chamado uma única
+                            // vez antes da liberação)
+} Object;</pre>
+</article>
+</div>
+<h3>Funções</h3>
+<article class="fn" id="fn-OBJ_createObjectPool">
+<h4><code>Pool* OBJ_createObjectPool(u16 size, u16 objectSize)</code></h4>
+<p>Cria e aloca um novo pool de objetos (esta função é um alias de <code>POOL_create(..)</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>size</code></td><td>Capacidade do pool (em número de objetos).</td></tr><tr><td><code>objectSize</code></td><td>Tamanho de um objeto individual (normalmente <code>sizeof(SuaStruct)</code>).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o novo pool de objetos criado, ou NULL se não houver memória suficiente.</p>
+</article>
+<article class="fn" id="fn-OBJ_create">
+<h4><code>Object* OBJ_create(Pool* pool)</code></h4>
+<p>Cria um novo objeto a partir do pool indicado (o objeto deve estender a estrutura base <code>Object</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pool</code></td><td>Pool de objetos de onde alocar (ver unidade pool.h).</td></tr></table>
+<p class="returns"><strong>Retorna:</strong> o objeto criado (inicializado com 0), ou NULL em caso de erro (pool esgotado ou inválido).</p>
+</article>
+<article class="fn" id="fn-OBJ_release">
+<h4><code>void OBJ_release(Pool* pool, Object* object, bool maintainCoherency)</code></h4>
+<p>Devolve um objeto ao pool indicado (o objeto deve estender a estrutura base <code>Object</code>).</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pool</code></td><td>Pool de objetos ao qual devolver o objeto (ver pool.h).</td></tr><tr><td><code>object</code></td><td>Objeto a liberar (deve estender <code>Object</code>).</td></tr><tr><td><code>maintainCoherency</code></td><td><em>TRUE</em> mantém a coerência da pilha de alocação para permitir a iteração usada por <code>OBJ_updateAll()</code>; <em>FALSE</em> torna a liberação mais rápida quando você não precisa iterar sobre os objetos alocados.</td></tr></table>
+</article>
+<article class="fn" id="fn-OBJ_updateAll">
+<h4><code>void OBJ_updateAll(Pool* pool)</code></h4>
+<p>Itera sobre todos os objetos ativos do pool indicado e chama o método <code>update</code> de cada um.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>pool</code></td><td>Pool cujos objetos serão atualizados.</td></tr></table>
+<p class="note"><strong>Aviso:</strong> é obrigatório usar sempre <code>maintainCoherency = TRUE</code> em <code>OBJ_release(..)</code>, caso contrário a iteração da pilha não funcionará corretamente.</p>
+</article>
+<article class="fn" id="fn-OBJ_setInitMethod">
+<h4><code>void OBJ_setInitMethod(Object* object, ObjectCallback* initMethod)</code></h4>
+<p>Define o método de inicialização do objeto indicado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>object</code></td><td>Objeto para o qual definir o método <code>init</code>.</td></tr><tr><td><code>initMethod</code></td><td>Método de inicialização (deve ser chamado após a criação do objeto).</td></tr></table>
+</article>
+<article class="fn" id="fn-OBJ_setUpdateMethod">
+<h4><code>void OBJ_setUpdateMethod(Object* object, ObjectCallback* updateMethod)</code></h4>
+<p>Define o método de atualização do objeto indicado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>object</code></td><td>Objeto para o qual definir o método <code>update</code>.</td></tr><tr><td><code>updateMethod</code></td><td>Método de atualização (normalmente chamado uma vez por frame).</td></tr></table>
+</article>
+<article class="fn" id="fn-OBJ_setEndMethod">
+<h4><code>void OBJ_setEndMethod(Object* object, ObjectCallback* endMethod)</code></h4>
+<p>Define o método de finalização do objeto indicado.</p>
+<table class="params"><tr><th>Parâmetro</th><th>Descrição</th></tr><tr><td><code>object</code></td><td>Objeto para o qual definir o método <code>end</code>.</td></tr><tr><td><code>endMethod</code></td><td>Método de destruição (deve ser chamado imediatamente antes de o objeto ser liberado).</td></tr></table>
+</article>
+</section>
