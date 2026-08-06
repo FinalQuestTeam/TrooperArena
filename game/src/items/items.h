@@ -9,10 +9,10 @@
 #define ITEM_HEART      0   // coração: cura 15 de vida (item_heart.c)
 #define ITEM_BOMB       1   // carga de bomba (item_bomb.c)
 #define ITEM_SHOTS      2   // bala: +1 disparo em leque, até 5 (item_shots.c)
-#define ITEM_SPEED      3   // botinha: +10% velocidade, até +50% (item_speed.c)
+#define ITEM_SPEED      3   // botinha: +20% velocidade, até +100% (item_speed.c)
 #define ITEM_SHIELD     4   // escudo: invencibilidade por 3 s (item_shield.c)
 #define ITEM_CHAIN      5   // raio: próximos 5 acertos em cadeia (item_chain.c)
-#define ITEM_ICE        6   // gelo: 3 tiros que congelam o inimigo por 10 s (item_ice.c)
+#define ITEM_ICE        6   // gelo: 3 tiros que congelam o inimigo por 5 s (item_ice.c)
 #define ITEM_FIRE       7   // fogo: 4 tiros que queimam (dano por tempo) (item_fire.c)
 #define ITEM_TYPES      8
 

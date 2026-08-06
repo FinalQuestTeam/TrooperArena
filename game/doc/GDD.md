@@ -10,7 +10,7 @@
 ## Sumário
 
 1. [Visão geral, controles, fluxo e HUD](#1-visão-geral-controles-fluxo-e-hud)
-2. [Jogador, tiros e bomba](#2-jogador-tiros-e-bomba)
+2. [Jogador, tiros, bomba e inventário](#2-jogador-tiros-bomba-e-inventário)
 3. [Inimigos](#3-inimigos)
 4. [Itens](#4-itens)
 5. [Fases e elementos de terreno](#5-fases-e-elementos-de-terreno)
@@ -22,9 +22,9 @@
 
 ## Visão geral
 
-**RedRex** é um jogo de arena *top-down* de sobrevivência/shooter para Sega Mega Drive, desenvolvido em C com o SGDK. O jogador controla um personagem em uma arena vista de cima, atirando e usando bombas para eliminar inimigos que surgem em ondas. O objetivo de cada fase é **matar N inimigos** (a meta `killTarget` definida por fase); ao atingir a meta, a fase é concluída e avança-se para a próxima.
+**RedRex** é um shooter de arena *top-down* para Mega Drive. O jogador pilota um **mech 32×32** (hitbox 16×16) numa arena de tela única, eliminando insetos-máquina que surgem em ondas. Em cada fase da campanha o objetivo é **matar N inimigos** (`killTarget`); na **fase 16**, o objetivo é **derrotar o chefe Lacraia** — vencê-lo mostra a tela de fim ("PARABENS! FIM") e volta ao título.
 
-A arena ocupa a **tela inteira**. A primeira linha de tiles (linha 0) é reservada para o HUD, e a arena começa na linha 1.
+A arena ocupa a tela inteira; a linha 0 de tiles é o HUD.
 
 | Dimensão | Valor (tiles) | Valor (pixels) |
 |---|---|---|
@@ -32,512 +32,292 @@ A arena ocupa a **tela inteira**. A primeira linha de tiles (linha 0) é reserva
 | Altura da arena (`ARENA_TILES_H`) | 27 | 216 |
 | Origem da arena (`ARENA_TILE_X`, `ARENA_TILE_Y`) | (0, 1) | (0, 8) |
 
-Os limites internos de movimento (dentro da borda de parede) são, em pixels:
-
-| Limite | Constante | Valor (px) |
-|---|---|---|
-| X mínimo | `INNER_MIN_X` | 8 |
-| Y mínimo | `INNER_MIN_Y` | 16 |
-| X máximo | `INNER_MAX_X` | 311 |
-| Y máximo | `INNER_MAX_Y` | 215 |
-
-> Observação: o Mega Drive roda a arena em resolução 320x216 px (H40). A tela-título usa outro modo (256 px de largura), conforme detalhado abaixo.
+Limites internos de movimento (dentro da borda de parede): `INNER_MIN_X` = 8, `INNER_MIN_Y` = 16, `INNER_MAX_X` = 311, `INNER_MAX_Y` = 215.
 
 ## Controles
 
-O jogo lê apenas o Joypad 1 (`JOY_1`). O mapeamento de botões é:
+Só o Joypad 1 (`JOY_1`) é lido. Comandos de menu/itens usam **detecção de borda** (comparação com `prevJoy`).
 
-| Botão | Ação |
-|---|---|
-| D-pad | Move o jogador (nas 8 direções, dentro dos limites da arena) |
-| A | Atira / Confirma o início da fase na tela de preparação |
-| B | Usa a bomba (elimina inimigos em área; as mortes contam para a meta) |
-| C | **(Debug)** Pula para a próxima fase |
-| START | Pausa / Continua o jogo e confirma o Game Over (recomeça a fase) |
-
-Notas:
-- Vários comandos usam **detecção de borda** (só disparam no instante em que o botão é pressionado), comparando o estado atual do joypad com o anterior (`prevJoy`).
-- O botão **C** faz `startPhase((currentLevel % LEVEL_COUNT) + 1)`, ou seja, avança ciclicamente entre as fases (volta à fase 1 após a última).
+| Botão | Em jogo (`ST_PLAY`) | Em telas |
+|---|---|---|
+| D-pad | Move nas 8 direções | Navega no menu / troca página da ajuda |
+| A | Atira (segurar = autofire na cadência) | Começa a fase (preparação) / confirma |
+| B | **Ativa** o item selecionado do inventário | Sai ao título (pausa) |
+| C | **Troca** a seleção do inventário | Avança a fase (preparação) |
+| START | Pausa / retoma | Confirma (game over → recomeça a fase; tela de fim → título) |
+| A+B+C (segurar) | **(Debug)** pula para a próxima fase (uma vez por combo) | — |
 
 ## Fluxo e estados do jogo
 
-O laço principal opera como uma máquina de estados com cinco estados (a tela-título roda *antes* do laço, em `title.c`):
+Máquina de estados em `core/flow.c` (a tela-título roda antes do laço, em `title.c`):
 
 | Estado | Descrição |
 |---|---|
-| `ST_PREP` | Tela de preparação: mostra "FASE n", as informações/condições da fase e "APERTE A PARA COMECAR". Aguarda o botão A. |
-| `ST_PLAY` | Jogo ativo. Inclui a contagem regressiva congelada de início de fase. |
-| `ST_PAUSE` | Pausa: mostra "PAUSA - FASE n", as infos da fase e "START PARA CONTINUAR". |
-| `ST_OVER` | Game Over: aguarda START para recomeçar a fase atual. |
-| `ST_DONE` | Fase concluída: exibe "FASE CONCLUIDA!" por 3 s (cena congelada) antes da próxima tela de preparação. |
+| `ST_PREP` | Preparação: "FASE n", meta, intervalo de spawn e os **sprites** dos inimigos da fase. A começa; C avança de fase. |
+| `ST_PLAY` | Jogo ativo (inclui a contagem "PREPARE-SE" de 3 s congelada). |
+| `ST_PAUSE` | Pausa: infos da fase; START retoma, B sai ao título. |
+| `ST_OVER` | Game over: START **recomeça a fase atual** com vida/bombas restauradas. |
+| `ST_DONE` | "FASE CONCLUIDA!" por 3 s antes da preparação da próxima fase. |
+| `ST_END` | Fim de jogo (chefe derrotado): "PARABENS! FIM"; START volta ao título. |
 
 ### Fluxo geral
 
-1. **Tela-título** (cubo 3D) → aperte **START** para começar.
-2. **Preparação** (`ST_PREP`): mostra a fase e as condições → aperte **A** para começar.
-3. **Contagem "PREPARE-SE"** (congelamento de 3 s): a fase carrega, mas o jogo fica congelado exibindo "PREPARE-SE 3", "PREPARE-SE 2", "PREPARE-SE 1" no topo. O jogador só assume o controle após a contagem.
-4. **Jogo ativo** (`ST_PLAY`): o jogador atira, usa bombas e elimina inimigos.
-5. A partir daí, dois desfechos:
-   - **Fase concluída** (`ST_DONE`): ao atingir a meta de mortes, "FASE CONCLUIDA!" aparece por **3 s** e o jogo vai para a **Preparação da próxima fase** (ciclando com `(currentLevel % LEVEL_COUNT) + 1`).
-   - **Game Over** (`ST_OVER`): se o jogador morre, aguarda **START** para **recomeçar a mesma fase**.
+1. **Splash** (logo FinalQuest) → **Tela-título** (fundo em bitmap-art + menu: **NOVO JOGO / FASE TESTE / COMO JOGAR**).
+2. **Preparação** (`ST_PREP`) → A para começar.
+3. **"PREPARE-SE 3-2-1"** (3 s congelado) → jogo ativo.
+4. Meta atingida → `ST_DONE` → preparação da próxima. Morte → `ST_OVER` → recomeça a mesma fase.
+5. **Fase 16**: o chefe é gerado no início; derrotá-lo → `ST_END` → título.
 
-### Temporizações (a 60 fps NTSC; `fps` = 60 NTSC / 50 PAL)
+### Temporizações (60 fps NTSC)
 
-| Evento | Valor no código | Segundos (NTSC) |
+| Evento | Código | Segundos |
 |---|---|---|
-| Congelamento de início ("PREPARE-SE") | `fps * 3` | 3 s |
-| Primeiro inimigo da fase (`FIRST_SPAWN_S`) | `FIRST_SPAWN_S * fps` = `1 * fps` | 1 s após o congelamento acabar |
-| Mensagem "FASE CONCLUIDA!" (`doneTimer`) | `fps * 3` | 3 s |
-| Cadência de tiro inimigo (`ENEMY_CD`) | `fps * 2` | 2 s |
-| Intervalo entre ondas de spawn | `def->spawnSeconds * fps` | `spawnSeconds` s (por fase) |
+| Congelamento "PREPARE-SE" | `fps * 3` | 3 s |
+| Primeiro inimigo (`FIRST_SPAWN_S`) | `1 * fps` | 1 s após o congelamento |
+| "FASE CONCLUIDA!" (`doneTimer`) | `fps * 3` | 3 s |
+| Intervalo entre ondas | `spawnSeconds * fps` | por fase (2–5 s) |
 
-> Detalhe importante: `spawnTimer` é inicializado em `FIRST_SPAWN_S * fps` (1 s), mas essa contagem só é decrementada durante o jogo ativo (após o congelamento de 3 s). Assim, o primeiro inimigo surge cerca de **1 s depois** do fim da contagem "PREPARE-SE". As ondas seguintes obedecem ao `spawnSeconds` da fase, e cada onda pode gerar `spawnCount` inimigos (mínimo 1).
+### Persistência
 
-### Persistência de vida e bombas
+- **Entre fases**: HP, cargas de bomba, itens do inventário e bônus acumulados (leque de balas, velocidade) **persistem**.
+- **No game over**: vida cheia (`PLAYER_fullHp`), bombas ao máximo (`BOMB_reset`), inventário esvaziado (`INV_clear`), potência de tiro/raio/velocidade zerados.
+- Cura tem **teto de 100 HP**.
 
-- **Entre fases**: a **vida (HP) e as bombas persistem** — `startPhase()` chama `PLAYER_reset()` (posiciona o jogador) mas **não** zera o HP nem recarrega as bombas.
-- **No Game Over**: ao apertar START em `ST_OVER`, o jogo chama `PLAYER_fullHp()` e `BOMB_reset()`, **restaurando vida e bombas ao valor inicial** antes de reexibir a preparação da fase.
-- A cura é limitada ao **teto de 100 de HP** (`healPlayer` respeita o limite de 100).
+## Tela-título, splash e ajuda
 
-## Tela-título
+- **Splash** (`splash.c`): logo da desenvolvedora (FinalQuest) recriado por char-map.
+- **Título** (`title.c`): arte de fundo em tile-art derivada de `src/img/bg.jpg` (`titlebg_data.h`, 2 paletas de 16 cores por cluster de tiles) + menu **NOVO JOGO / FASE TESTE / COMO JOGAR**. Sem música (ver Áudio).
+- **Como Jogar** (`help.c`): **5 páginas** navegáveis com ←/→ — controles, inimigos (cor/forma, com os sprites reais), a elite (pentágonos), itens diretos e itens de inventário.
 
-Antes do laço de jogo, `TITLE_run()` roda uma tela de abertura própria, usando o **modo bitmap** do SGDK (`BMP_init`) em largura de **256 px** (`VDP_setScreenWidth256()`), com a API 3D `maths3D` do SGDK:
+## HUD (linha 0)
 
-- Um **cubo 3D wireframe azul** girando continuamente. O cubo tem 8 vértices e 12 arestas, desenhado com `BMP_drawLine` sobre linhas projetadas em 2D.
-  - Rotação por quadro: `+1.2` em X e `+1.8` em Y (graus), com *wrap* em 360°.
-  - Câmera a distância `FIX16(15)`, cubo transladado em Z para `FIX16(22)`, iluminação desligada.
-  - Cor 14 = azul do cubo (`0x3060F0`); cor 15 = branco dos textos (`0xF0F0F0`).
-- Texto **"R E D R E X"** fixo no topo e **"APERTE START"** piscando a cada ~0,5 s (alternado por `(frame >> 5) & 1`, ou seja, liga/desliga a cada 32 quadros).
-- Aperte **START** para sair da tela-título e entrar no jogo. Ao sair, o modo bitmap é encerrado (`BMP_end`) e o VDP volta para 320 px, com os planos limpos.
-
-> **A música NÃO toca na tela-título.** O modo bitmap faz DMA pesado que interrompe o DAC (canal PCM). A música de fundo (intro + loop) só é inicializada e iniciada (`MUSIC_init()` / `MUSIC_start()`) depois da tela-título, já no modo normal do VDP, ao entrar no jogo.
-
-## HUD
-
-O HUD ocupa a **linha 0** (topo da tela), acima da arena. É desenhado/atualizado por funções dedicadas (`HUD_drawKills`, `HUD_drawLife`, `HUD_drawBombs`) e contém:
-
-| Elemento | Conteúdo | Fonte |
+| Coluna | Elemento | Fonte |
 |---|---|---|
-| Ícone caveira + contador de MORTES | Caveira (tile `TILE_SKULL`) seguida do progresso `kills / killTarget` (mortes atuais e meta da fase) | `HUD_drawKills(kills, killTarget)` |
-| FASE n | Número da fase atual | HUD |
-| Ícone bomba + cargas | Bomba (tile `TILE_BOMB_ICON`) seguida do número de cargas disponíveis (`BOMB_count()`) | `HUD_drawBombs(BOMB_count())` |
-| HP | Vida atual do jogador (teto de 100) | `HUD_drawLife(hp)` |
+| 1–8 | Caveira + `kills/killTarget` | `HUD_drawKills` |
+| 14–25 | **Inventário**: 4 posições × 3 colunas (`>` cursor, ícone 8×8, contagem) | `HUD_drawInventory` |
+| 27–28 | **Modo de tiro ativo** (raio/gelo/fogo): ícone + cargas restantes | idem |
+| 33–39 | `HP:xxx` | `HUD_drawLife` |
 
-Os tiles de ícone do HUD são: caveira (`TILE_SKULL` = 41) e bomba (`TILE_BOMB_ICON` = 42), ambos 8x8. Existem ainda ícones 8x8 dos tipos de inimigo (`TILE_ICON_RED` = 43, `TILE_ICON_YEL` = 44, `TILE_ICON_PUR` = 45) definidos em `game.h`.
-
-> A contagem de mortes é atualizada tanto pelos tiros do jogador quanto pelas mortes causadas pela bomba (ambos incrementam `kills` e redesenham o contador via `HUD_drawKills`).
-
+O inventário é redesenhado **só quando o estado muda** (`HUD_drawInventoryIfDirty`, assinatura do estado) — economiza escritas de VDP por quadro.
 
 ---
 
-# 2. Jogador, tiros e bomba
+# 2. Jogador, tiros, bomba e inventário
 
 ## O jogador
 
-O jogador é representado por um **círculo ciano de 16x16 pixels**. Ele se move livremente nas **4 direções cardinais**, com **diagonais** permitidas (movimento simultâneo em X e Y). O deslocamento é calculado em **fixed-point 26.6** (a posição interna `pfx`/`pfy` é a posição em pixels deslocada 6 bits à esquerda), o que garante suavidade e permite frações de pixel por frame.
+Mech **32×32** (sprite, PAL2, 8 direções — encara a direção do movimento) com **hitbox 16×16**. Movimento em **fixed-point 26.6**.
 
-### Movimento
-
-- **Velocidade base:** `PLAYER_SPEED = 2` px/frame. Internamente vira `speedFp = 2 << 6 = 128` unidades 26.6 por frame.
-- **Diagonais:** ao pressionar duas direções perpendiculares, aplica-se a mesma velocidade em cada eixo (sem normalização), resultando em movimento diagonal mais rápido (~2,83 px/frame).
-- **Contido pela arena:** a posição é limitada (clamp) entre `INNER_MIN_X`/`INNER_MIN_Y` e `INNER_MAX_X - 15`/`INNER_MAX_Y - 15`, mantendo os 16 px do sprite dentro da área interna jogável.
-- **Lentidão da lama (`playerSlowPct`):** quando há um percentual de lentidão ativo, a velocidade é reduzida proporcionalmente:
-
-  `speedFp = speedFp * (100 - playerSlowPct) / 100`
-
-  Ou seja, `playerSlowPct` é uma redução percentual direta sobre a velocidade daquele frame. Com `playerSlowPct = 0` não há penalidade; com valores maiores o jogador fica mais lento sobre a lama.
-
-### Vida
-
-- **Vida inicial:** `START_HP = 100` (definida por `PLAYER_fullHp`, chamada no início do jogo e após o game over).
-- **Teto de vida:** 100 (a cura nunca ultrapassa `START_HP`).
-- A vida (`hp`) é do tipo `s16`; quando chega a `<= 0` o jogo entra em **game over** (`gameOver = TRUE`, exibe "GAME OVER" e "APERTE START").
-
-### Dano e invencibilidade
-
-Ao levar dano, o jogador fica **invencível por ~0,3 s piscando**. O temporizador de invencibilidade é:
-
-`invTimer = (fps * 3) / 10`
-
-A 60 fps (NTSC): `invTimer = 180 / 10 = 18 frames = 0,30 s`.
-
-Durante esse período o sprite pisca: `PLAYER_hidden()` retorna verdadeiro quando `(invTimer >> 2) & 1`, ou seja, o sprite **some e aparece a cada 4 frames** (alterna a cada ~0,067 s).
-
-Existem duas rotinas distintas de perda de vida:
-
-| Função | Respeita invencibilidade? | Uso típico |
+| Parâmetro | Constante | Valor |
 |---|---|---|
-| `damagePlayer(dmg)` | **Sim** — se `invTimer` estiver ativo, o dano é ignorado por completo | Dano de tiros inimigos e contato com inimigos |
-| `loseHp(dmg)` | **Não** — subtrai `hp` diretamente, sempre | Dano de ambiente contínuo (ex.: lava) |
+| Velocidade base | `PLAYER_SPEED` | 2 px/frame |
+| Vida inicial / teto | `PLAYER_START_HP` | 100 |
+| Invencibilidade pós-dano | `PLAYER_INV_TENTHS` | 0,3 s (pisca a cada 4 frames) |
+| Cadência de tiro | `PLAYER_FIRE_TENTHS` | 0,8 s (1,25 tiros/s) |
+| Bônus da botinha | `PLAYER_SPEED_STEP` / `PLAYER_SPEED_MAX` | +20% por item, teto +100% (dobro) |
+| Escudo (item) | `PLAYER_SHIELD_TENTHS` | 3,0 s de invencibilidade total |
 
-- `damagePlayer`: se não estiver invencível, chama `loseHp` e, se não for game over, arma o `invTimer` (0,3 s).
-- `loseHp`: subtrai o dano, redesenha a vida no HUD e checa o game over. Ignora a invencibilidade de propósito, para que perigos de ambiente (lava) drenem a vida mesmo logo após um dano.
-- `healPlayer(amount)`: soma vida com **teto em 100** (`if (hp > START_HP) hp = START_HP`) e atualiza o HUD.
+Rotinas de dano:
 
-### Direção de tiro
+| Função | Respeita invencibilidade? | Uso | Som |
+|---|---|---|---|
+| `damagePlayer(dmg)` | Sim | Contato e projétil de **inimigo** | `SFX_playerHit` (tom grave descendente) |
+| `loseHp(dmg)` | Não | Ambiente (lava) | só o crepitar ambiente |
 
-A direção do tiro (`faceX`, `faceY`) segue a **última direção cardinal pressionada**:
-
-- Movendo só na horizontal: `faceX = ±1`, `faceY = 0`.
-- Movendo só na vertical: `faceX = 0`, `faceY = ±1`.
-- Movendo na diagonal: `faceX` e `faceY` recebem ambos os sentidos (tiro diagonal).
-
-Quando nenhum botão direcional está pressionado, a direção anterior é mantida. O estado inicial (`PLAYER_reset`) é `faceX = 1`, `faceY = 0` (mirando à direita).
+A direção de tiro (`faceX/faceY`) segue a última direção pressionada (8 direções); inicial = direita.
 
 ## Tiros do jogador
 
-O disparo é feito com o **botão A** (o botão B é reservado para a bomba). Cada disparo respeita um **cooldown**:
+| Propriedade | Valor |
+|---|---|
+| Velocidade (`PSHOT_SPEED`) | 3 px/frame |
+| Máx. simultâneos (`MAX_PSHOTS`) | 16 |
+| Potência (leque) | 1 a `SHOTS_MAX_POWER` = 5 balas por disparo (item bala) |
+| Abertura do leque | cisalhamento `SHOTS_ARC_SHEAR` = 8 |
+| Origem | boca do mech (`PSHOT_MUZZLE_FWD` = 13 px à frente, 5 px à direita) |
+| Dano | 1 por bala (HP dos inimigos é medido em tiros) |
 
-`shotCooldown = (fps * 4) / 5`
+**Modos de tiro** (ativados pelo inventário; a carga é consumida **a cada disparo**, mesmo errando):
 
-A 60 fps: `shotCooldown = 240 / 5 = 48 frames = 0,80 s`, resultando em uma **cadência de 1,25 tiros/s**.
+| Modo | Cargas | Efeito no inimigo atingido |
+|---|---|---|
+| `SHOTMODE_CHAIN` (raio) | 5 acertos | Reação em cadeia: até **3 inimigos** num raio de **80 px**, com arcos elétricos visuais |
+| `SHOTMODE_ICE` (gelo) | 3 tiros | **Congela por 5 s** (parado, sem dano de contato; overlay ciano) |
+| `SHOTMODE_FIRE` (fogo) | 4 tiros | **Queimadura por 6 s**: 1 de dano a cada 2 s (pisca enquanto queima) |
 
-Características do projétil do jogador:
+## Tiros inimigos
+
+Fixed-point 26.6, mirados no centro do jogador no instante do disparo (`getApproximatedDistance` normaliza).
 
 | Propriedade | Valor |
 |---|---|
-| Tamanho | 8x8 px |
-| Velocidade (`PSHOT_SPEED`) | 3 px/frame (inteiro, sem fixed-point) |
-| Origem | centro do jogador (`px + 4`, `py + 4`) |
-| Direção | `faceX * 3`, `faceY * 3` (segue a mira atual) |
-| Máx. simultâneos (`MAX_PSHOTS`) | 6 |
-
-Regras de funcionamento:
-
-- `SHOTS_firePlayer` procura o primeiro slot livre em `pshots[]`; se todos os 6 estiverem ativos, o tiro não sai (limita a cadência de fogo além do cooldown). Ao disparar, toca `SFX_playerShot`.
-- Cada frame, os tiros avançam por `vx`/`vy`. Se saírem da arena (`INNER_MIN_X`/`INNER_MIN_Y` a `INNER_MAX_X - 7`/`INNER_MAX_Y - 7`), são desativados.
-- **Colisão com inimigos:** testa `ENEMIES_damageBox(x, y, 8, 8)` — uma caixa AABB de 8x8. Em qualquer acerto (`hit != ENEMY_HIT_NONE`) o tiro é **consumido** (desativado), mesmo que o inimigo não morra.
-- Se o acerto resultar em morte (`ENEMY_HIT_KILLED`), o contador de mortes do frame é incrementado e `SHOTS_updatePlayer` devolve esse total. **Inimigo morto por tiro conta para a meta** da fase.
-
-## Tiros inimigos (mecânica de colisão contra o jogador)
-
-Os projéteis inimigos (`eshots[]`) usam **fixed-point 26.6** para posição e velocidade (struct `FShot` com campos `s32`), permitindo direções normalizadas com precisão.
-
-- **Mira no jogador:** ao disparar (`fireEnemyShot(ex, ey)`), calcula-se o vetor do centro do inimigo até o **centro do jogador** (`px + 8`, `py + 8`), obtém-se a distância aproximada (`getApproximatedDistance`) e o vetor é normalizado e escalado por `ESHOT_SPEED = 2` px/frame:
-
-  `vx = dx * 2 << 6 / dist` e `vy = dy * 2 << 6 / dist`
-
-  Assim o tiro segue em linha reta em direção à posição do jogador no instante do disparo. Toca `SFX_enemyShot`.
-- **Máx. simultâneos (`MAX_ESHOTS`):** 16.
-- **Saída da arena:** convertidos de volta para pixels (`>> 6`); saindo dos limites internos (`INNER_MIN_*` a `INNER_MAX_* - 7`), são desativados.
-- **Colisão pelo círculo do jogador:** usa distância ao quadrado entre o centro do tiro (`sx + 4`, `sy + 4`) e o centro do jogador (`px + 8`, `py + 8`):
-
-  `if (dx*dx + dy*dy <= 100)` → acerto.
-
-  O limiar 100 corresponde a um raio de colisão de **10 px** (raio 7 do jogador + raio 3 do tiro). No acerto, o tiro é desativado e aplica-se `damagePlayer(HIT_DAMAGE)`.
-- **Dano (`HIT_DAMAGE`):** 10 de vida por acerto (bloqueado se o jogador estiver invencível, pois passa por `damagePlayer`).
+| Velocidade (`ESHOT_SPEED`) | 2 px/frame |
+| Máx. simultâneos (`MAX_ESHOTS`) | 16 |
+| Dano padrão (`ESHOT_DAMAGE`) | 10 (o chefe atira com 13) |
+| Colisão | círculo: `dx²+dy² ≤ 100` (raio 7 do jogador + 3 do tiro) |
 
 ## Bomba
 
-O jogador começa cada partida com **`BOMB_MAX = 2` cargas** de bomba.
+- Teto **`BOMB_MAX` = 3 cargas**; começa com o máximo. Item de bomba dá +1 (respeitando o teto).
+- **Uso**: pelo inventário (posição 0, botão B). Consome 1 carga, toca `SFX_bombBlast`, dispara o **flash de tela** e mata **todos os inimigos comuns** (`ENEMIES_killAll`), sem drops; as mortes **contam para a meta**.
+- **O chefe resiste à bomba**: sofre só **4 de dano** (`BOMB_BOSS_DMG`), nunca morre pela bomba (fica com no mínimo 1 HP) e **não sofre nada se estiver blindado**.
 
-- **Persistência:** as cargas **persistem entre as fases**, sempre limitadas ao teto de 2 (`BOMB_MAX`).
-- **Reset:** `BOMB_reset` devolve as cargas ao máximo no início do jogo e no game over (não redesenha o HUD por conta própria).
-- **Reposição:** o item de bomba chama `BOMB_add`, que soma +1 respeitando o teto de 2 e atualiza o HUD (`HUD_drawBombs`).
+## Inventário (`core/inventory.c`)
 
-**Uso (botão B) — `BOMB_use`:**
+**4 posições selecionáveis**: a posição **0 é a bomba** (mostra as cargas) e as posições **1–3 guardam itens de inventário** coletados (raio, escudo, gelo, fogo — a bomba coletada vira carga). Duplicatas ocupam posições separadas.
 
-| Condição | Efeito |
-|---|---|
-| Há pelo menos 1 carga | Consome 1 carga, atualiza o HUD, toca o som de explosão (`SFX_bombBlast`), dispara o flash de tela (`GFX_flash`) e mata **todos** os inimigos da tela (`ENEMIES_killAll`) |
-| Sem carga (`bombs == 0`) | Nada acontece (retorna 0 imediatamente) |
-
-Detalhes importantes:
-
-- A bomba mata todos os inimigos **sem drop de itens** (`ENEMIES_killAll` não sorteia coletáveis, ao contrário da morte por tiro).
-- As mortes causadas pela bomba **contam para a meta** da fase (`BOMB_use` devolve o número de inimigos mortos, repassado ao contador).
-- `BOMB_count` expõe a quantidade atual de cargas, usada para (re)desenhar o HUD ao entrar/redesenhar a fase.
-
+- **C** = seleciona a próxima posição (cíclico); **B** = ativa a posição selecionada.
+- Ativar raio/gelo/fogo liga o **modo de tiro** correspondente (aparece no HUD com as cargas); ativar o escudo dá 3 s de invencibilidade; ativar a bomba explode.
+- Começa **vazio** (só as bombas); esvaziado a cada novo jogo e no game over.
 
 ---
 
 # 3. Inimigos
 
-## Inimigos
+## A matriz forma × cor
 
-Os inimigos são o principal desafio da arena. O jogo mantém até `MAX_ENEMIES` (**10**) inimigos ativos simultaneamente. Eles não existem desde o início: são criados por *spawn* ao longo da partida (`ENEMIES_trySpawn`), conforme o conjunto de tipos permitidos na fase corrente, e sempre a uma **distância mínima do jogador** (~56 px) para nunca surgirem em cima dele.
+Cada inimigo combina uma **forma** (perfil de resistência) com uma **cor** (comportamento). Todos são insetos-máquina com arte própria (besouro/mosca/aranha) rotacionada em 8 direções — o inimigo **encara o jogador**.
 
-Cada inimigo é descrito por uma estrutura `Enemy` que carrega:
+| | **Vermelho** (atira) | **Amarelo** (persegue) | **Roxo** (escudo cíclico) | **Laranja** (investida) |
+|---|---|---|---|---|
+| **Quadrado** (resistente) | Torreão | Batedor | Baluarte | Aríete |
+| **Triângulo** (frágil/veloz) | Fuzileiro | Caçador | Escudeiro | Adaga |
+| **Pentágono** (elite + truque) | Artilheiro (leque) | Alcateia (divide) | Fortaleza (invoca) | Meteoro (teleporta) |
 
-- **tipo** (`ENEMY_RED`, `ENEMY_YELLOW`, `ENEMY_PURPLE`);
-- **vida** (`hp`), medida em número de tiros necessários para matá-lo;
-- **tamanho** (lado do quadrado em px, dado por `ENEMY_SIZE`): 16x16 para vermelho e amarelo, 32x32 para o roxo;
-- posição em ponto-fixo 26.6 (`fx`/`fy`) e velocidade por frame (`vx`/`vy`);
-- temporizadores de tiro (`fireTimer`), de recálculo de rota (`retarget`) e de recuo pós-colisão (`stun`);
-- lentidão atual por elementos da fase (`slowPct`, em %).
+## Tabela completa (valores dos `defs/*.c`)
 
-Todos os inimigos são quadrados coloridos. A cor identifica o comportamento.
+Velocidade em unidades 26.6 por frame (`ENEMY_SPEED_FP` = 40 ≈ 0,63 px/frame). Vida em tiros para morrer.
 
-| Tipo (cor) | Tamanho (px) | Vida (tiros p/ morrer) | Comportamento | Atira? | Dano de contato | Velocidade de perseguição |
+| Inimigo | Tam. (px) | HP | Dano contato | Drop % | Velocidade | Timers / truque |
 |---|---|---|---|---|---|---|
-| **Vermelho** (`ENEMY_RED`) | 16x16 | 1 | Torre fixa (não se move) | Sim — mirado no jogador a cada 2 s | 10 (`ENEMY_DMG_RED`) | — (imóvel) |
-| **Amarelo** (`ENEMY_YELLOW`) | 16x16 | 1 | Persegue o jogador | Não | 5 (`ENEMY_DMG_YELLOW`) | `ENEMY_SPEED_FP` = 40/64 ≈ 0,63 px/frame (~37,5 px/s a 60 fps) |
-| **Roxo** (`ENEMY_PURPLE`) | 32x32 | 5 | Persegue devagar (tanque) | Não | 15 (`ENEMY_DMG_PURPLE`) | `ENEMY_SPEED_FP`/2 = 20/64 ≈ 0,31 px/frame (~18,75 px/s a 60 fps) |
+| **Torreão** (SQ vermelho) | 16 | 3 | 8 | 45% | 0 (fixo) | atira a cada 2,0 s |
+| **Batedor** (SQ amarelo) | 16 | 3 | 8 | 40% | 40 | — |
+| **Baluarte** (SQ roxo) | 32 | 6 | 15 | 75% | 20 | escudo: 2,5 s vulnerável / 2,0 s blindado |
+| **Aríete** (SQ laranja) | 16 | 4 | 12 | 45% | 20 | investida, cooldown 1,5 s |
+| **Fuzileiro** (TRI vermelho) | 16 | 1 | 6 | 20% | 55 | move e atira a cada 1,0 s |
+| **Caçador** (TRI amarelo) | 16 | 1 | 8 | 20% | 90 (o mais veloz) | — |
+| **Escudeiro** (TRI roxo) | 16 | 2 | 10 | 30% | 50 | escudo: 1,2 s / 0,8 s (curto e frequente) |
+| **Adaga** (TRI laranja) | 16 | 1 | 10 | 25% | 40 | investida, cooldown 0,8 s |
+| **Artilheiro** (PEN vermelho) | 24 | 3 | 10 | 60% | 0 (fixo) | **leque de 3 tiros** a cada 2,5 s |
+| **Alcateia** (PEN amarelo) | 24 | 3 | 10 | 55% | 35 | ao morrer, **divide-se em 2 Caçadores** |
+| **Fortaleza** (PEN roxo) | 32 | 4 | 15 | 80% | 15 | escudo 2,0 s / 2,5 s; **invoca 1 Caçador a cada 1,5 s enquanto blindado** |
+| **Meteoro** (PEN laranja) | 24 | 3 | 14 | 60% | 20 | **teleporta para perto** antes de investir; cooldown 1,8 s |
+| **Dummy** (teste) | 24 | 20 | 0 | 0% | 0 | alvo da fase teste 1 |
+| **Alvo** (teste) | 24 | 1 | 0 | 0% | 0 | alvos do raio na fase teste 2 |
+| **Lacraia** (CHEFE) | **48** | **25** | **20** | 100% | 32 | ver abaixo |
 
-> Conversões assumem NTSC (60 fps). Em PAL (`fps` = 50) os tempos em segundos derivados de `fps` mudam proporcionalmente; as velocidades por *frame* são as mesmas, mas o deslocamento por segundo cai.
+### Comportamentos por cor
 
-### Vermelho (ENEMY_RED)
+- **Vermelho** (`enemy_red.c`): persegue se `speedFp > 0`; dispara mirado no jogador a cada `timerA` décimos de s. Com `EXTRA_SPREAD` dispara **leque de 3**. Primeiro tiro escalonado (`ENEMY_CD/2 + random % fps`) para dessincronizar.
+- **Amarelo** (`enemy_yellow.c`): perseguição pura (`ENEMIES_chase`). Com `EXTRA_SPLIT`, ao morrer gera 2 Caçadores no lugar.
+- **Roxo** (`enemy_purple.c`): persegue e alterna escudo — `timerA` s vulnerável / `timerB` s blindado. Blindado: **bloqueia tiros** (pisca para sinalizar) e é imune à cadeia/bomba. Com `EXTRA_SUMMON` invoca Caçadores enquanto blindado.
+- **Laranja** (`enemy_orange.c`): aproxima → **telegrafa 0,2 s** (para mirando) → **investida reta 0,5 s a ~3,1 px/frame** (`DASH_SPEED_FP` = 200) → cooldown `timerA`. Com `EXTRA_TELEPORT`, pisca para um ponto próximo do jogador antes do bote.
 
-Quadrado **vermelho 16x16**, com **1 de vida** (morre com um único tiro). É uma **torre FIXA**: não persegue nem se desloca — seu `update` (`enemy_red.c`) só cuida do tiro.
+## O chefe: Lacraia (`enemy_boss.c`)
 
-- **Atira mirado no jogador** a cada **2 segundos**. A cadência vem de `ENEMY_CD = fps*2` (120 frames a 60 fps). Quando `fireTimer` chega a zero, chama `fireEnemyShot(x, y)` (projétil apontado para a posição do jogador) e rearma o timer com `ENEMY_CD`.
-- No *spawn*, o primeiro tiro é escalonado: `fireTimer = ENEMY_CD/2 + (random % fps)`, ou seja, entre **1,0 e ~2,0 s** — isso dessincroniza vários vermelhos e evita rajadas simultâneas.
-- **Dano de contato**: `ENEMY_DMG_RED` = **10** (o maior por encostão entre os que ficam parados). Mesmo imóvel, ferir-se nele custa caro.
-- **Não recua**: por estar fixo, o vermelho é o único que **não** sofre *knockback* ao colidir com o jogador (mantém a posição).
+Centopeia vermelha **48×48** (arte própria `INS_BOSS48`, desenhada como 4 sprites de 24×24). Aparece na **fase 16** (e na arena de teste, estágio 3). Contador mestre `tA` dirige todos os ciclos:
 
-### Amarelo (ENEMY_YELLOW)
+| Mecânica | Valor |
+|---|---|
+| Vida | 25 tiros |
+| Dano de contato | 20 · Dano do tiro: **13** |
+| **Blindagem cíclica** | invulnerável **3 s a cada 15 s** (12 s vulnerável) |
+| **Invocação** | 2 Caçadores a cada **10 s** |
+| **Alternância de modo** | a cada **4 s**: agressivo ↔ à distância |
+| Modo agressivo | aproxima e usa **dash** (telegrafa e investe a `BOSS_DASH_FP` = 210) |
+| Modo à distância | **recua** do jogador e dispara **leque de 5 tiros** (dano 13) a cada ~1,2 s |
+| Resistência à bomba | sofre 4 (nunca morre por bomba; 0 se blindado) |
+| Ao morrer | poça de sangue, drop garantido, `bossDefeated` → tela de fim |
 
-Quadrado **amarelo 16x16**, com **1 de vida**. É o **perseguidor** clássico: seu `update` (`enemy_yellow.c`) apenas chama `ENEMIES_chase(e, ENEMY_SPEED_FP)`.
+## Mecânicas comuns (engine `enemies.c`)
 
-- **Persegue o jogador** à velocidade `ENEMY_SPEED_FP` = **40 em 26.6 ≈ 0,63 px/frame** (~37,5 px/s a 60 fps), mais lento que o jogador — dá para escapar em linha reta, mas ele corta caminho.
-- **Não atira**. Todo o perigo é o **dano de contato**: `ENEMY_DMG_YELLOW` = **5** (o menor). Individualmente é fraco, mas em número incomoda por cercar o jogador.
-
-### Roxo (ENEMY_PURPLE)
-
-Quadrado **roxo 32x32** (o **dobro** do lado dos demais), com **5 de vida** — o **tanque**: exige **5 tiros** para morrer. Seu `update` (`enemy_purple.c`) chama `ENEMIES_chase(e, ENEMY_SPEED_FP / 2)`.
-
-- **Persegue à METADE da velocidade do amarelo**: `ENEMY_SPEED_FP/2` = **20 em 26.6 ≈ 0,31 px/frame** (~18,75 px/s a 60 fps). É lento e telegrafado, mas absorve muito dano.
-- **Não atira**. O perigo é o **dano de contato**, o mais alto do jogo: `ENEMY_DMG_PURPLE` = **15**. Somado ao corpo grande (32x32), é difícil de desviar em espaços apertados.
-
-## Mecânicas comuns
-
-### Perseguição (`ENEMIES_chase`)
-
-Rotina compartilhada por amarelo e roxo. A direção **não é recalculada todo frame**: a cada `RETARGET_FRAMES` = **16 frames (~0,27 s)** o inimigo re-mira o centro do jogador, normaliza o vetor pela distância aproximada e fixa `vx`/`vy` (em 26.6) proporcionais à `speedFp` recebida. Nos frames intermediários ele apenas **integra** essa velocidade em ponto-fixo (`fx`/`fy` += `vx`/`vy`), o que barateia o custo e dá um leve "atraso" ao movimento.
-
-- A posição resultante é **contida na arena** (limites `INNER_MIN_*`/`INNER_MAX_*`, considerando o tamanho do quadrado), então inimigos nunca saem da área jogável.
-- **Lentidão da lama** (`slowPct`): antes de mover, a velocidade efetiva é reduzida por `speedFp * (100 - slowPct) / 100`. Ao pisar em elementos lentificantes, o perseguidor desacelera na mesma proporção.
-
-### Dano de contato + knockback
-
-A cada frame, `ENEMIES_update` roda o comportamento do inimigo e depois testa colisão AABB entre o inimigo (tamanho por tipo) e o jogador (16x16). Ao **encostar no jogador**:
-
-- aplica `damagePlayer(dmg)` com o dano do tipo (10 / 5 / 15), **respeitando a invencibilidade** do jogador (se estiver invencível, não sofre);
-- se isso causar *game over*, o processamento para imediatamente.
-
-Para evitar **dano contínuo** enquanto encostado, os **perseguidores RECUAM** após a colisão (o vermelho, fixo, **não** recua):
-
-- entram em **stun** por `fps/3` = **20 frames (~0,33 s ≈ 1/3 de segundo)**, durante os quais só integram a velocidade de recuo (não re-miram);
-- a **velocidade de recuo** é no sentido oposto ao jogador: **2x a de perseguição para o amarelo** (`ENEMY_SPEED_FP * 2` ≈ 1,25 px/frame) e **1x para o roxo** (`ENEMY_SPEED_FP` ≈ 0,63 px/frame — o tanque recua mais devagar);
-- ao terminar o stun, `retarget` é zerado para que o inimigo **volte a mirar imediatamente**.
-
-### Spawn (`ENEMIES_trySpawn`)
-
-Recebe a lista de tipos permitidos da fase (`types`, `typeCount`) e tenta preencher **um** slot livre por chamada:
-
-- sorteia o tipo entre os permitidos (`random % typeCount`);
-- procura uma posição válida em até **12 tentativas**, exigindo distância aproximada **≥ 56 px** do jogador; se nenhuma servir neste frame, desiste e tenta no próximo período de spawn;
-- ao posicionar, inicializa `hp` (**5** para roxo, **1** para os demais), zera velocidades/stun/lentidão e escalona o `fireTimer` inicial.
-
-### Aplicar acerto de tiro (`ENEMIES_damageBox`)
-
-Recebe uma caixa (x, y, w, h) e atinge o **primeiro** inimigo ativo em colisão:
-
-- decrementa `hp`; se **sobrou vida**, retorna `ENEMY_HIT_DAMAGED`;
-- se **zerou**, desativa o inimigo, tenta **dropar um item** onde ele morreu (`ITEMS_tryDrop`, no centro do inimigo) e retorna `ENEMY_HIT_KILLED`;
-- se não acertou ninguém, retorna `ENEMY_HIT_NONE`.
-
-### Matar todos / bomba (`ENEMIES_killAll`)
-
-Desativa **todos** os inimigos ativos de uma vez (efeito da bomba) e retorna quantos morreram. Diferentemente do tiro, a bomba **não sorteia itens** — nenhum drop é gerado.
-
-### Limpeza (`ENEMIES_clear`)
-
-Zera o array inteiro de inimigos (usado ao reiniciar/estados de transição).
-
+- **Capacidade**: vetor de `MAX_ENEMIES` = 16; spawn regular só até `ENEMY_CAP` = 15 ativos (Alcateia/Fortaleza podem estourar até 16 ao dividir/invocar).
+- **Spawn** (`ENEMIES_trySpawn`): sorteia o tipo do roster da fase; até 12 tentativas de posição com distância **≥ 56 px do jogador**.
+- **Perseguição** (`ENEMIES_chase`): re-mira a cada `RETARGET_FRAMES` = 16 frames; entre re-miras só integra a velocidade (barato). Lentidão da lama aplicada por %.
+- **Separação anti-empilhamento** (`ENEMIES_separate`): a cada 2 quadros (30 Hz), pares muito próximos recebem empurrões opostos — normalização por **tabela de recíprocos** (sem divisão no laço, regra do 68000).
+- **Contato + knockback**: AABB contra a hitbox 16×16 do jogador; aplica o dano (com i-frames) e o inimigo móvel **recua a 2× a velocidade por 1/3 s** (stun). Fixos não recuam.
+- **Congelado**: parado, sem comportamento nem dano de contato, overlay ciano.
+- **Queimando**: 1 de dano a cada 2 s por 6 s; pisca; mortes pela queimadura contam para a meta.
+- **Morte** (`enemyDie`): poça de **sangue verde** no chão, sorteio de drop, divisão (Alcateia), flag do chefe.
+- **Raio em cadeia** (`ENEMIES_chainDamage`): a partir do acerto, até 3 alvos em 80 px (blindados são imunes); arcos elétricos visuais.
 
 ---
 
 # 4. Itens
 
-## Itens
+Itens caem de inimigos mortos **por tiro/queimadura** (a bomba não gera drops). Dois sorteios: **(1)** cai ou não — `dropChance` do tipo de inimigo (tabela acima); **(2)** qual item — proporcional ao `weight` de cada `ItemDef` (a soma não precisa dar 100).
 
-Itens são recompensas que caem no cenário quando um inimigo é derrotado **por
-tiro** do jogador. Inimigos eliminados pela bomba **não** derrubam item algum —
-apenas mortes causadas por projétil disparam a rotina de drop (`ITEMS_tryDrop`).
+## Tipos, pesos e efeitos
 
-Regras gerais do sistema de itens:
+| Item | Peso | Categoria | Efeito |
+|---|---|---|---|
+| **Coração** | 40 | direto | Cura 15 HP (teto 100) |
+| **Bomba** | 20 | inventário (vira carga) | +1 carga (teto 3) |
+| **Bala** | 10 | direto | +1 bala no leque (até 5 por disparo) |
+| **Botinha** | 10 | direto | +20% de velocidade (teto +100%) |
+| **Escudo** | 5 | inventário | Ao ativar: invencível por 3 s (imune até a lava) |
+| **Raio** | 5 | inventário | Ao ativar: próximos 5 acertos fazem cadeia (3 alvos, 80 px) |
+| **Gelo** | 5 | inventário | Ao ativar: próximos 3 tiros congelam por 5 s |
+| **Fogo** | 5 | inventário | Ao ativar: próximos 4 tiros aplicam queimadura (6 s, 1 dano/2 s) |
 
-- **Limite no chão:** existem no máximo `MAX_ITEMS = 8` itens ativos
-  simultaneamente. Cada slot livre é procurado ao gerar um novo drop; se todos
-  os 8 slots estiverem ocupados, o drop é simplesmente perdido (nenhum item é
-  criado).
-- **Tempo de vida (TTL):** ao surgir, o item recebe `ttl = fps * 10`. A 60 fps
-  (NTSC) isso equivale a **600 frames = 10 segundos** no chão.
-- **Piscar antes de sumir:** nos **últimos 2 segundos** de vida
-  (`ttl < fps * 2`, ou seja abaixo de 120 frames), o item começa a piscar para
-  avisar que vai desaparecer. O piscar alterna aproximadamente a cada 4 frames
-  (`(ttl >> 2) & 1`), fazendo o sprite ser omitido em metade dos ciclos.
-- **Coleta:** o item é coletado automaticamente ao o jogador passar por cima
-  dele. A detecção usa uma caixa de colisão (AABB) de **16x16** pixels do
-  jogador sobreposta ao item de 16x16. Não é preciso nenhuma ação; basta encostar.
-- **Posicionamento:** o item nasce centralizado na posição de morte do inimigo
-  (`cx - 8`, `cy - 8`) e é fixado (clamp) dentro dos limites internos da arena
-  (`INNER_MIN/MAX`) para nunca aparecer parcialmente fora da área jogável.
+Soma dos pesos = 100 (coincidência atual; o sorteio usa a soma real).
 
-## Chance de drop por inimigo
+## Regras de chão
 
-Quando um inimigo morre por tiro, ocorre um **primeiro sorteio** que decide
-apenas se **cai ou não** um item. A chance depende do **tipo do inimigo**,
-conforme a tabela `dropChance[]`. Internamente é feito `random() % 100` e o
-resultado é comparado com a chance do tipo: se o número sorteado for maior ou
-igual à chance, nada cai.
-
-| Tipo de inimigo | Constante      | Chance de derrubar item |
-|-----------------|----------------|-------------------------|
-| Vermelho        | `ENEMY_RED`    | 25%                     |
-| Amarelo         | `ENEMY_YELLOW` | 30%                     |
-| Roxo            | `ENEMY_PURPLE` | 75%                     |
-
-Ou seja, inimigos mais fortes/raros (Roxo) recompensam com muito mais
-frequência do que os básicos (Vermelho). Esse é apenas o sorteio de **"cai ou
-não cai"** — o tipo de item ainda não foi decidido nesta etapa.
-
-## Sorteio de qual item (peso)
-
-Se o primeiro sorteio determinou que **vai cair** um item, um **segundo
-sorteio ponderado** decide **qual** item aparece. Esse sorteio é feito pela
-função `pickItemType()` usando os pesos da tabela `itemWeight[]` (a soma dos
-pesos deve dar 100).
-
-O funcionamento de `pickItemType()`: sorteia `r = random() % 100` (valor de 0 a
-99) e percorre os tipos acumulando os pesos — se `r` for menor que o peso do
-tipo atual, esse tipo é escolhido; caso contrário, subtrai o peso e passa ao
-próximo. O último tipo funciona como fallback de segurança caso os pesos somem
-menos de 100.
-
-| Item             | Constante    | Peso (chance de ser o item escolhido) |
-|------------------|--------------|----------------------------------------|
-| Coração          | `ITEM_HEART` | 70%                                    |
-| Carga de bomba   | `ITEM_BOMB`  | 30%                                    |
-
-Importante: esse peso é **condicional** — só se aplica depois que o item já
-"caiu". A chance final de um coração cair de um inimigo específico é o produto
-das duas etapas (ex.: Roxo → 75% de cair × 70% de ser coração = 52,5%).
-
-## Tipos de item
-
-Cada tipo de item tem um ícone 16x16 desenhado **proceduralmente** em tempo de
-execução (não é um asset importado, é gerado pixel a pixel em `buildTile`), e
-usa a paleta `PAL1`.
-
-### Coração (ITEM_HEART)
-
-- **Ícone:** coração vermelho de 16x16, desenhado proceduralmente
-  (`ITEMHEART_buildTile`) — dois lóbulos circulares no topo mais um corpo
-  triangular embaixo, com um pequeno brilho (highlight) no lóbulo esquerdo.
-- **Efeito:** cura **15 de vida** (`HEART_HEAL = 15`), aplicado via
-  `healPlayer(HEART_HEAL)`. A cura é limitada ao **teto de 100** de vida — o
-  excedente não é acumulado.
-
-### Carga de bomba (ITEM_BOMB)
-
-- **Ícone:** bomba redonda de 16x16, desenhada proceduralmente
-  (`ITEMBOMB_buildTile`) — corpo circular escuro com brilho no canto superior
-  esquerdo e um pavio com faísca laranja saindo do topo.
-- **Efeito:** adiciona **+1 carga de bomba** (`BOMB_add()`), respeitando o
-  **teto de 2 cargas**. Se o jogador já estiver com o número máximo de cargas,
-  o item é **consumido mesmo assim, sem efeito** (a coleta acontece, mas a
-  carga extra é descartada).
-
-## Coleta
-
-A coleta é resolvida em `ITEMS_update()`, executado a cada frame para todos os
-itens ativos:
-
-1. **Decremento do TTL:** cada frame decrementa `ttl`. Quando chega a **0**, o
-   item é desativado (`active = FALSE`) e some do chão sem produzir efeito.
-2. **Piscar:** enquanto `ttl < fps * 2` (últimos **2 segundos** / 120 frames), o
-   sprite pisca (alternando a cada ~4 frames) para sinalizar que está prestes a
-   desaparecer.
-3. **Detecção de coleta:** testa a sobreposição AABB entre a caixa 16x16 do
-   jogador e o item 16x16. Havendo colisão, aplica o efeito do item conforme o
-   tipo (`apply()` → `ITEMHEART_apply` ou `ITEMBOMB_apply`), toca o som de
-   coleta e desativa o item.
-
-**Som de coleta:** ao coletar, toca `sfxItemPickup()` — um "blip" ascendente
-gerado no chip PSG, dando o feedback sonoro clássico de item pego.
-
----
-Resumo: seção de Itens do GDD escrita cobrindo drop por tiro, chances por inimigo (25/30/75%), sorteio ponderado do item (70% coração / 30% bomba), efeitos (cura 15/teto 100; +1 bomba/teto 2), TTL de 10s com piscar nos últimos 2s e coleta por AABB 16x16, com frames convertidos a 60 fps.
-
+- Máx. **8 itens** ativos (`MAX_ITEMS`); sem slot → o drop é perdido.
+- **TTL de 10 s**; pisca nos últimos 2 s.
+- Coleta automática por AABB 16×16; toca `sfxItemPickup` (blip ascendente).
+- **Itens diretos** aplicam o efeito na hora; **itens de inventário** vão para uma posição livre (1–3). Inventário cheio: o item é consumido sem efeito.
+- Arte 16×16 por char-map (`items_data.h`), pintada em `ITEMS_buildTiles`.
 
 ---
 
 # 5. Fases e elementos de terreno
 
-## Fases
+## Estrutura
 
-O jogo é organizado em `LEVEL_COUNT` = **4 fases**, definidas cada uma em seu próprio arquivo (`level1.c` a `level4.c`) e registradas no dispatcher `levels.c`. Ao completar a última, o ciclo recomeça na Fase 1 (as fases são **cicladas**).
+`LEVEL_COUNT` = **16** (1–15 campanha + 16 = chefe). Cada fase é um `LevelDef` (dados puros) em `levels/defs/levelNN.c`: terreno (`lava`/`mud`, retângulos em tiles), `killTarget`, `spawnSeconds`, `spawnCount` e o **roster** de tipos. A arte dos inimigos do roster é gerada **por fase** na VRAM (ver §6).
 
-Toda fase é descrita por uma única estrutura `LevelDef` (`levels.h`), que reúne os elementos de terreno, as condições de vitória e as regras de aparição de inimigos:
+## Tabela das fases
 
-- **Elementos de terreno** — ponteiros e contagens para os retângulos de terreno especial:
-  - `lava` / `lavaCount`: lista de retângulos de lava (`NULL` se a fase não tiver lava).
-  - `mud` / `mudCount`: lista de poças de lama (`NULL` se a fase não tiver lama).
-  Cada retângulo é um `TileRect { x, y, w, h }` expresso em **tiles de 8x8 px** (`elements.h`).
-- **Condição de vitória**:
-  - `killTarget`: número de inimigos que o jogador precisa eliminar para completar a fase.
-- **Regras de aparição (spawn)**:
-  - `spawnSeconds`: intervalo entre aparições de inimigos, em segundos.
-  - `spawnCount`: quantos inimigos surgem por aparição (`0` ou `1` = aparição simples; `2` = duplas; etc.).
-  - `enemyTypes` / `enemyTypeCount`: os tipos de inimigo permitidos na fase (Vermelho, Amarelo, Roxo).
+| Fase | Meta | Spawn (s) | Por onda | Roster | Terreno |
+|---|---|---|---|---|---|
+| 1 | 10 | 5 | 1 | Torreão, Batedor | — |
+| 2 | 12 | 5 | 1 | + Aríete | — |
+| 3 | 14 | 4 | 1 | Batedor, Baluarte, Aríete | Lava |
+| 4 | 16 | 4 | 1 | Torreão, Baluarte, **Caçador** | Lama |
+| 5 | 18 | 4 | 1 | **Fuzileiro**, Caçador, Aríete | — |
+| 6 | 20 | 3 | 1 | Fuzileiro, Caçador, **Adaga** | Lava |
+| 7 | 22 | 3 | **2** | Caçador, **Escudeiro**, Baluarte | Lama |
+| 8 | 24 | 3 | 2 | Fuzileiro, Caçador, Adaga, Aríete | Lava |
+| 9 | 24 | 4 | 1 | **Artilheiro, Alcateia**, Caçador | — |
+| 10 | 26 | 3 | 2 | Alcateia, **Meteoro**, Adaga | Lama |
+| 11 | 28 | 3 | 2 | Artilheiro, **Fortaleza**, Caçador | Lava + lama |
+| 12 | 30 | 3 | 2 | Meteoro, Fuzileiro, Caçador, Baluarte | Lava + lama |
+| 13 | 34 | 2 | 2 | Baluarte, Caçador, Adaga, Artilheiro, Alcateia | Lava |
+| 14 | 37 | 2 | **3** | Fortaleza, Meteoro, Alcateia, Caçador | Lava + lama |
+| 15 | 40 | 2 | 3 | Aríete, Fuzileiro, Caçador, Adaga, Artilheiro, Fortaleza, Meteoro | Lava + lama |
+| **16** | **chefe** | — | — | **Lacraia** (+ Caçadores invocados) | — |
 
-O dispatcher `LEVEL_current()` resolve a fase ativa a partir de `currentLevel` (1..4). `LEVEL_draw()` redesenha a arena e seus elementos (usado ao retomar do pause), `LEVEL_load()` desenha e ainda zera o estado dos elementos (começar/recomeçar) e `LEVEL_update()` roda a cada frame a lógica dos elementos daquela fase.
+Layouts de terreno (`layouts.c`, retângulos em tiles): `LAVA_PAIR` {5,6,10×6}+{25,15,10×6}, `MUD_PAIR` {6,15,10×6}+{24,5,10×6}; combos (fases com os dois) usam retângulos 8×5 em cantos opostos.
 
-### Tabela das fases
+Na preparação/pausa, os inimigos do roster aparecem como **sprites reais** alinhados pela base (`LEVEL_drawInfo` → `ENEMYGFX_drawOnMap`); o chefe (48 px) não é mostrado ali.
 
-| Fase | Meta (matar N) | Intervalo de spawn (s) | Inimigos por spawn | Tipos de inimigo | Elemento de terreno |
-|------|----------------|------------------------|--------------------|------------------|---------------------|
-| 1 | 10 | 5 | 1 (simples) | Vermelho, Amarelo | Nenhum (arena vazia) |
-| 2 | 20 | 3 | 1 (simples) | Vermelho, Amarelo | **Lava** — 2 blocos |
-| 3 | 25 | 5 | 1 (simples) | Vermelho, Amarelo, Roxo | **Lama** — 2 poças |
-| 4 | 20 | 5 | **2 (duplas)** | Vermelho, Amarelo | Nenhum (arena vazia) |
+## Fase teste (sandbox, opção do menu)
 
-Observações por fase (valores reais dos arquivos `levelN.c`):
+3 estágios ligados por **portas** (`levels/test.c`):
 
-- **Fase 1** (`level1.c`): arena vazia, sem elementos de terreno. Progressão de dificuldade mais suave (meta baixa, spawn lento).
-- **Fase 2** (`level2.c`): introduz **lava** com 2 blocos, em tiles `{ 5, 7, 10x6 }` (bloco superior esquerdo) e `{ 25, 17, 10x6 }` (bloco inferior direito). É a fase de spawn mais rápido (3 s) e meta maior que a Fase 1.
-- **Fase 3** (`level3.c`): introduz **lama** com 2 poças, em tiles `{ 7, 6, 9x6 }` (poça superior esquerda) e `{ 24, 16, 10x7 }` (poça inferior direita). É a única fase que libera o inimigo **Roxo** e tem a maior meta (25).
-- **Fase 4** (`level4.c`): mesma arena vazia da Fase 1, mas os inimigos surgem em **duplas** (`spawnCount = 2`), aumentando a pressão sem mudar o cenário.
-
-### Exibição dos inimigos nas telas de preparação/pause
-
-Nas telas de informação da fase (`LEVEL_drawInfo`, usada na preparação e no pause) os tipos de inimigo **não são escritos como texto**: cada tipo é mostrado como um **quadradinho colorido (ícone)** desenhado diretamente no tilemap, à direita do rótulo "INIMIGOS:", espaçados de 2 colunas. O mapeamento é: Vermelho → `TILE_ICON_RED`, Amarelo → `TILE_ICON_YEL`, Roxo → `TILE_ICON_PUR`. As demais linhas dessa tela mostram a meta de mortes e o intervalo de spawn em texto.
+1. **Dummies** (HP 20, inofensivos) + fileira com 1 item de cada tipo (reabastecida).
+2. **Alvos** frágeis agrupados — demonstra a reação em cadeia do raio. Porta "CHEFE →".
+3. **Arena do chefe** — a Lacraia com o comportamento completo.
 
 ## Elementos de terreno
 
-Os elementos de terreno vivem em `src/elements/` e cada um é auto-contido (padrão de tile procedural, desenho, detecção de "estar em cima" e atualização por frame). A fase apenas lista, no `LevelDef`, quais retângulos de cada elemento existem — a lógica é compartilhada entre todas as fases que usarem aquele elemento.
-
 ### Lava
-
-Área de **2 retângulos vermelhos** (padrão vermelho com respingos laranja, gerado proceduralmente em `LAVA_buildTile`). Aplica **dano progressivo** enquanto o **centro do jogador** (jogador de 16x16, testado em `px+8`, `py+8`) estiver sobre qualquer um dos retângulos:
-
-- O dano começa em `LAVA_DPS_MIN` = **5 por segundo** e sobe `LAVA_DPS_STEP` = **5** a cada segundo pisando na lava, com teto em `LAVA_DPS_MAX` = **25 por segundo**. Ou seja: 5/s no 1º segundo, 10/s no 2º, 15/s no 3º, 20/s no 4º e 25/s do 5º segundo em diante.
-- A taxa é implementada aplicando 1 de HP por "tick", com o intervalo do tick = `fps / dps` frames (a 60 fps, quanto maior o dps, mais frequente o dano).
-- O dano **ignora a invencibilidade** do jogador — é considerado dano de ambiente, não de inimigo.
-- Ao **sair** da lava, a progressão é **zerada** (`LAVA_reset`): o dano volta a começar em 5/s na próxima vez.
-- Enquanto o jogador está na lava, toca o **som ambiente de fogo/queimando** (`SFX_AMB_LAVA`).
+Dano **progressivo** enquanto o centro do jogador está em cima: 5/s subindo +5 a cada segundo, teto 25/s (tick de 1 HP com intervalo `fps/dps`). **Ignora i-frames** (é `loseHp`); zera ao sair. Som ambiente de crepitar. Inimigos não são afetados.
 
 ### Lama
-
-Área de **2 poças marrons** (padrão marrom com torrões mais escuros, gerado em `MUD_buildTile`). Reduz a velocidade de quem pisa nela, de forma **progressiva**, tanto para o jogador quanto para os inimigos. Cada entidade acumula **seu próprio tempo** na lama (o jogador tem `playerMudTime`; cada inimigo tem seu `mudTime`), então a lentidão é individual.
-
-- **Jogador**: a lentidão cresce `MUD_PLAYER_STEP` = **10% por segundo** pisando, até o teto `MUD_PLAYER_MAX` = **70%**. (A fórmula `slowFromTime` aplica um degrau imediato de STEP% ao entrar e soma +STEP% a cada segundo até o teto.)
-- **Inimigos**: a lentidão cresce `MUD_ENEMY_STEP` = **3% por segundo** pisando, até o teto `MUD_ENEMY_MAX` = **30%**. O centro do inimigo é calculado conforme o seu tamanho (`ENEMY_SIZE(e) / 2`).
-- Ao **sair** da lama, o tempo acumulado e a lentidão daquela entidade são **restaurados** a zero (o jogador volta à velocidade cheia; cada inimigo idem).
-- Enquanto o jogador está na lama, toca o **som ambiente de passos** (`SFX_AMB_MUD`).
-
-> Nota de precisão: o cabeçalho de comentário de `mud.c` cita "-5%/-65%" para o jogador, mas os valores reais vigentes são os definidos em `mud.h` — **-10% por segundo, teto -70%** (comentário desatualizado no `.c`).
-
-### Arquitetura modular de fases e elementos
-
-O acoplamento entre fases e elementos é intencionalmente **modular e orientado a dados**:
-
-- Uma **fase é só dados** (`LevelDef`): ela declara quais retângulos de lava/lama existem e as regras de spawn/vitória, sem escrever nenhuma lógica.
-- Um **elemento é código reutilizável** (`draw` / `update` / `reset` + tile procedural) que opera sobre a lista de `TileRect` que a fase fornecer.
-- O dispatcher (`LEVEL_draw`/`LEVEL_update`/`LEVEL_reset`) apenas percorre os elementos presentes na fase atual (`if (def->lava) ...`, `if (def->mud) ...`), então **adicionar uma nova fase** é criar um `levelN.c` com sua `LevelDef` e registrá-lo no vetor `levels[]`; **adicionar um novo elemento de terreno** é criar seu par de arquivos em `elements/`, acrescentar seu ponteiro/contagem ao `LevelDef` e um par de linhas no dispatcher. Nenhuma fase existente precisa ser tocada.
-
+Lentidão progressiva **individual** (cada entidade acumula seu tempo): jogador **+10%/s até 70%**; inimigos **+3%/s até 30%**. Zera ao sair. Som ambiente de passos ("squelch" a cada ~1/3 s).
 
 ---
 
@@ -545,89 +325,54 @@ O acoplamento entre fases e elementos é intencionalmente **modular e orientado 
 
 ## Áudio
 
-O áudio do RedRex é dividido em dois domínios de hardware totalmente independentes do Sega Mega Drive: todos os **efeitos sonoros** e o **som ambiente** são gerados diretamente no chip PSG (SN76489), enquanto a **música de fundo** toca no DAC do YM2612 via driver PCM. Como usam chips distintos, a música nunca corta os efeitos sonoros, e vice-versa.
+**Todo o áudio atual é PSG (SN76489)**, sintetizado em tempo real — sem amostras.
 
-### Efeitos sonoros (PSG)
+> **Música de fundo: desligada.** O driver XGM corrompe a VRAM neste projeto (conflito com o uso intenso de DMA) e o driver PCM/DAC desregula com DMA ativa. `music.c` está stub. Caminho futuro: PCM com transferências por CPU (que não pausam o Z80).
 
-Todos os SFX são sintetizados em tempo real por acesso direto ao PSG, sem amostras. Cada tipo de som tem um canal fixo, evitando que dois efeitos disputem a mesma voz:
+| Função | Canal | Som |
+|---|---|---|
+| `SFX_playerShot` | 1 (tom) | Tiro: pitch caindo de ~1400 Hz, 10 frames |
+| `sfxItemPickup` | 2 (tom) | Coleta: blip **ascendente** 600→1400 Hz, 8 frames |
+| `SFX_playerHit` | 2 (tom) | **Dano sofrido** (só de inimigo): tom **grave descendente** ~300→110 Hz, 14 frames; tem prioridade sobre a coleta |
+| `SFX_enemyShot` | 3 (ruído) | Ruído branco curto, 8 frames |
+| `SFX_bombBlast` | 3 (ruído) | Explosão: ruído grave, 30 frames, prioridade sobre o tiro inimigo |
+| `SFX_ambient` | 0 (tom) | Lava (crepitar trêmulo ~900 Hz) / lama (squelch grave periódico) |
 
-| Função | Canal PSG | Comportamento |
-|--------|-----------|---------------|
-| `SFX_playerShot` | canal 1 (tom) | Tiro do jogador: começa em 1400 Hz e o pitch **cai** a cada frame (500 + `sfxShot`*90), com volume decaindo. Duração de 10 frames. |
-| `sfxItemPickup` | canal 2 (tom) | Coleta de item: "blip" **ascendente** de recompensa (pitch sobe de 600 Hz até ~1400 Hz), 8 frames. Nome em minúsculo pois cumpre o contrato declarado em `game.h`. |
-| `SFX_enemyShot` | canal de ruído (3) | Tiro inimigo: ruído branco curto (`PSG_NOISE_FREQ_CLOCK4`), 8 frames, envelope moderado. |
-| `SFX_bombBlast` | canal de ruído (3) | Explosão da bomba: ruído branco mais grave (`PSG_NOISE_FREQ_CLOCK2`), mais longo (30 frames) e mais alto (`PSG_ENVELOPE_MAX`). Tem **prioridade** sobre o tiro inimigo — enquanto a explosão soa, ela zera `sfxNoise`, silenciando qualquer tiro inimigo no mesmo canal. |
-| ambiente | canal 0 | Som ambiente do terreno (ver abaixo). |
-
-O decaimento de todos os efeitos é processado por `SFX_update`, que deve ser chamado a cada frame no loop principal: ele reduz os contadores de duração e recalcula frequência/envelope até o silêncio. `SFX_silence` zera todos os contadores e força envelope mínimo nos quatro canais.
-
-### Som ambiente (canal 0)
-
-O canal 0 é dedicado ao som contínuo do elemento de terreno sob o jogador, dirigido por `SFX_ambient(kind)`:
-
-- **`SFX_AMB_LAVA`** — crepitar de fogo agudo: frequência alta e trêmula (~900 Hz + tremor aleatório `random() & 0x1FF`) com volume baixo flutuante (8 + `random() & 3`), simulando o "crackle" das chamas.
-- **`SFX_AMB_MUD`** — passos na lama: um "squelch" grave e curto a cada ~1/3 s (período = `fps / 3`), com frequência baixa subindo levemente (100 + t*25) e volume baixo que decai; entre os passos, silêncio.
-
-O tipo ambiente é reaplicado a cada quadro pelos elementos de fase. Na prática o loop reseta o ambiente para `SFX_AMB_NONE` e a lava/lama voltam a religá-lo enquanto o jogador está sobre elas. Se nenhum elemento reativa, o canal 0 volta ao envelope mínimo (silêncio). Nas telas de pausa, preparação e game over o ambiente é silenciado.
-
-### Música de fundo (PCM)
-
-A trilha toca no **DAC do YM2612** através do driver PCM do SGDK (`SND_PCM_loadDriver`), separado do PSG — por isso não interfere nos efeitos sonoros. É áudio PCM **13,4 kHz, mono, 8-bit** (`SOUND_PCM_RATE_13400`, `SOUND_PAN_CENTER`), a partir do recurso `res/bgm.res` (`mus_intro[]` e `mus_loop[]`).
-
-A reprodução é uma máquina de estados de três posições — `MUS_IDLE`, `MUS_INTRO`, `MUS_LOOP`:
-
-1. `MUSIC_start` toca a **intro** (0–15 s) **uma única vez** (flag de loop `FALSE`) e passa para `MUS_INTRO`.
-2. `MUSIC_update`, chamado a cada frame, detecta o fim da intro (`!SND_PCM_isPlaying()`) e engata o **trecho de loop** (16–45 s) com repetição infinita (flag `TRUE`), indo para `MUS_LOOP`.
-
-A música só começa ao **entrar no jogo**, e não na tela-título: a tela-título usa modo bitmap, que interrompe o DAC e impediria a reprodução PCM.
+`SFX_update` processa decaimentos por frame; `SFX_silence` zera tudo (usado nas transições).
 
 ## Gráficos
 
-### Tiles procedurais
+### Arte procedural por char-maps
 
-**Todos** os gráficos do jogo são gerados por código em tempo de execução — não há assets de imagem externos. A rotina `buildTiles` (em `gfx.c`) preenche um buffer de tiles 4bpp (`tileBuf`, um `u32` por linha de 8 pixels) e o envia à VRAM com `VDP_loadTileData(... DMA)`. São gerados: o **jogador** (círculo de raio 7,5, 16x16), os **inimigos** (quadrados de borda clara — vermelho e amarelo 16x16, roxo/tanque 32x32), os **projéteis** (discos 8x8), a **parede** (bloco sólido com linha de brilho), **lava** e **lama** (delegados a `LAVA_buildTile`/`MUD_buildTile`), o **coração** e a **bomba** (itens, via `ITEMS_buildTiles`), a **caveira** do contador de mortes, o ícone de **bomba** do HUD e os três **ícones de inimigo** (vermelho/amarelo/roxo) para as telas de fase e pausa.
+Não há bitmaps no build (exceto a derivação offline do fundo do título). Toda a arte vem de **char-maps** em `system/video/sprites/*.h`, pintados em tiles 4bpp no boot ou por fase:
 
-**Layout de sprite (ordem coluna).** Os sprites do Mega Drive armazenam os tiles em **ordem de coluna**: percorre-se a coluna inteira antes de passar à próxima. O helper `setPix(baseTile, x, y, color, colTiles)` traduz uma coordenada de pixel para o tile e bit corretos:
+- `tilegen.c` — tiles fixos: jogador (círculo legado), projéteis, parede, porta, sombra, overlay de gelo (4×4), poça de sangue, e os ícones 8×8 de `icons_data.h` (caveira, bomba, raio, faísca, escudo, gelo, fogo).
+- `chars.c` — mechs 32×32 (9 personagens) rotacionados em **8 direções** (nearest-neighbor, cardeais exatas), na região CHARS da VRAM; o jogador usa PAL2.
+- `enemygfx.c` — insetos rotacionados em 8 direções, **gerados por fase** (não no boot). **Pools por tamanho** com descarte por vida útil: 5 slots de 16 px + 3 de 24 px + 2 de 32 px = **632 tiles** (`ENEMY_ROT_COUNT`); um tipo que não aparece em fases futuras cede o slot. O chefe tem região própria (`BOSS_ROT`, 288 tiles).
+- `floor.c` — chão 32×32 ladrilhado no **BG_B** (PAL3).
+- `titlebg.c` — fundo do título (índice 0 reservado — no MD ele rende a cor de fundo, não a da paleta).
 
-```c
-u16 tile = baseTile + (x / 8) * colTiles + (y / 8);
-tileBuf[tile * 8 + (y % 8)] |= (u32) color << ((7 - (x % 8)) * 4);
-```
+**Orçamento de VRAM**: ~1345 tiles usados no pico de gameplay, de ~1408 disponíveis (os tilemaps começam em 0xB000). Cargas grandes são feitas com o **display desligado** (DMA com display ativo trunca).
 
-`colTiles` é a altura do sprite em tiles (2 para 16x16, 4 para 32x32), de modo que avançar 8 px em X salta uma coluna inteira de tiles. O deslocamento `(7 - (x%8)) * 4` posiciona o nibble de 4 bits da cor: o pixel mais à esquerda ocupa os bits altos do `u32` da linha. Tiles 8x8 simples (caveira, bomba, ícones) são desenhados a partir de mapas de caracteres com `buildTile8`.
+### Lista de sprites (`spritelist.c`)
 
-### Paleta
+Reconstruída a cada frame, encadeada por link, enviada via `DMA_QUEUE`:
 
-São usadas duas paletas: **PAL0** para texto/HUD e **PAL1** para os objetos do jogo. A PAL1 é definida em `initPalette` (índices de hardware 17–27, correspondendo aos índices 1–11 dentro da paleta):
+1. **Jogador** (32×32, fixo no link 0 — nunca descartado pelo VDP).
+2. **Inimigos**, com **rotação de flicker**: a varredura começa em um índice diferente por quadro, distribuindo o descarte do VDP (limite de 20 sprites/320 px por linha) entre todos — o piscar em cena cheia fica uniforme. Blindados e queimando piscam de propósito (feedback). Chefe = 4 sprites 24×24; congelados ganham overlay ciano.
+3. **Itens**, **projéteis**, **arcos do raio**.
+4. **Sombra do jogador** (prioridade baixa, sob os demais).
 
-| Índice (PAL1) | Cor (RGB) | Uso |
-|---------------|-----------|-----|
-| 1 | 0xF0F0F0 | Contorno claro (bordas de sprites e ícones) |
-| 2 | 0x20C0E0 | Jogador (ciano) |
-| 3 | 0xD02020 | Inimigo vermelho |
-| 4 | 0xF0E040 | Inimigo amarelo / tiro do jogador |
-| 5 | 0xF08020 | Tiro inimigo |
-| 6 | 0x506070 | Parede (corpo) |
-| 7 | 0x8098A8 | Parede (brilho) |
-| 8 | 0x9040D0 | Inimigo roxo (tanque) |
-| 9 | 0x8A5A28 | Lama (marrom) |
-| 10 | 0x5A3A14 | Lama (torrões escuros) |
-| 11 | 0x282830 | Corpo da bomba |
+### Decalques e flash
 
-O índice **0** é a cor de fundo compartilhada; é ele que o flash da bomba manipula (ver "Flash de tela").
+- **Sangue verde** (`blood.c`): ao morrer, um decalque 16×16 no **BG_A** (4 cópias espelhadas do tile `TILE_BLOOD`) — fica sob os sprites e sobre o chão, sem custo por frame.
+- **Flash de tela** (`flash.c`): a explosão da bomba clareia a **paleta do chão (PAL3)** até o branco e decai em degraus.
 
-### Sprites de hardware
+### Paletas
 
-A lista de sprites é **reconstruída do zero a cada frame** por `GFX_drawSprites`, encadeada por link e enviada por DMA (`VDP_updateSprites(n, DMA_QUEUE)`). Cada sprite recebe como próximo link o índice seguinte (`n + 1`), e o último fecha a cadeia com link 0 (`VDP_setSpriteLink(n - 1, 0)`). A ordem de montagem é:
-
-1. **Jogador** (sprite 0; sai da tela em `y = -32` quando pisca durante a invencibilidade).
-2. **Inimigos** ativos — tile e tamanho conforme o tipo (roxo 32x32, vermelho/amarelo 16x16).
-3. **Itens** (`ITEMS_draw`).
-4. **Projéteis** — tiros do jogador e depois tiros inimigos (estes com coordenadas em ponto fixo, deslocadas `>> 6`).
-
-Nas telas sem ação (título, pausa, game over) usa-se `GFX_hideSprites`, que envia uma lista mínima de um único sprite fora da tela.
-
-### Flash de tela
-
-`GFX_flash` dispara um clarão de tela inteira usado na explosão da bomba, com duração de **18 frames (~0,3 s)**. Ele age sobre a **cor de fundo (índice 0)**, visível através de todos os tiles transparentes do interior da arena. `GFX_updateFlash`, chamado por frame, faz a cor **piscar branco e decair em degraus até o preto**: 0xF0F0F0 → 0xA0A0A0 → 0x505050 → 0x000000. `GFX_stopFlash` cancela o efeito e restaura o fundo preto imediatamente.
-
+| Paleta | Uso |
+|---|---|
+| PAL0 | Texto/HUD |
+| PAL1 | Objetos (1 contorno claro, 2 ciano/gelo, 3 vermelho, 4 amarelo, 5 tiro inimigo, 6/7 parede, 8 roxo, 9/10 lama, 11 escuro, 12 laranja, 13 cinza, 14 verde, 15 azul) |
+| PAL2 | Mech do jogador |
+| PAL3 | Chão (alvo do flash) |
