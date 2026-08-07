@@ -1,5 +1,6 @@
 // Lama: área que reduz a velocidade progressivamente enquanto se pisa nela.
-// Jogador: -10% por segundo, até -70%. Inimigos: -3% por segundo, até -30%.
+// Jogador: -30% ao entrar, -10% por segundo, até -70%.
+// Inimigos: -3% ao entrar, -3% por segundo, até -30%.
 
 #include "elements/mud.h"
 #include "system/video/sprites/tiles.h"
@@ -40,10 +41,10 @@ static bool isOn(const TileRect *rects, u16 count, s16 cx, s16 cy)
     return FALSE;
 }
 
-// lentidão em %: STEP% imediato ao entrar, +STEP% a cada segundo, teto MAX%
-static u16 slowFromTime(u16 time, u16 step, u16 max)
+// lentidão em %: BASE% imediato ao entrar, +STEP% a cada segundo, teto MAX%
+static u16 slowFromTime(u16 time, u16 base, u16 step, u16 max)
 {
-    u16 slow = step * (1 + time / fps);
+    u16 slow = base + step * (time / fps);
     return (slow > max) ? max : slow;
 }
 
@@ -60,7 +61,7 @@ void MUD_update(const TileRect *rects, u16 count)
     {
         SFX_ambient(SFX_AMB_MUD);       // som de passos na lama
 
-        playerSlowPct = slowFromTime(playerMudTime, MUD_PLAYER_STEP, MUD_PLAYER_MAX);
+        playerSlowPct = slowFromTime(playerMudTime, MUD_PLAYER_BASE, MUD_PLAYER_STEP, MUD_PLAYER_MAX);
         if (playerMudTime < 0xFFFF) playerMudTime++;
     }
     else MUD_reset();
@@ -74,7 +75,7 @@ void MUD_update(const TileRect *rects, u16 count)
         const s16 half = ENEMY_SIZE(e) / 2;
         if (isOn(rects, count, e->x + half, e->y + half))
         {
-            e->slowPct = slowFromTime(e->mudTime, MUD_ENEMY_STEP, MUD_ENEMY_MAX);
+            e->slowPct = slowFromTime(e->mudTime, MUD_ENEMY_BASE, MUD_ENEMY_STEP, MUD_ENEMY_MAX);
             if (e->mudTime < 0xFFFF) e->mudTime++;
         }
         else

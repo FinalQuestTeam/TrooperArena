@@ -17,6 +17,5 @@ const EnemyDef ENEMYDEF_tri_red =
     .timerA     = 10,              // atira a cada 1,0 s
     .timerB     = 0,
     .extra      = EXTRA_NONE,
-    .tile       = TILE_TRI_RED,
     .behavior   = ENEMYRED_update,
 };

@@ -17,6 +17,5 @@ const EnemyDef ENEMYDEF_pen_orange =
     .timerA     = 18,            // cooldown de 1,8 s
     .timerB     = 0,
     .extra      = EXTRA_TELEPORT,   // truque: pisca para perto antes do bote
-    .tile       = TILE_PEN_ORG,
     .behavior   = ENEMYORANGE_update,
 };

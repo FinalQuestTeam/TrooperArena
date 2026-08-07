@@ -17,6 +17,5 @@ const EnemyDef ENEMYDEF_pen_red =
     .timerA     = 25,             // leque a cada 2,5 s
     .timerB     = 0,
     .extra      = EXTRA_SPREAD,   // truque: leque de tiros
-    .tile       = TILE_PEN_RED,
     .behavior   = ENEMYRED_update,
 };

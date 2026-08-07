@@ -8,5 +8,6 @@ const LevelDef LEVEL04_def =
 {
     .killTarget = 16, .spawnSeconds = 4, .spawnCount = 1,
     .mud = MUD_PAIR, .mudCount = LAYOUT_RECTS,
+    .floor = FLOOR_FOREST,
     LVL_ROSTER(roster),
 };

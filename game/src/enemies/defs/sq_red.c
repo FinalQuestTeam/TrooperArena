@@ -18,6 +18,5 @@ const EnemyDef ENEMYDEF_sq_red =
     .timerA     = 20,               // atira a cada 2,0 s
     .timerB     = 0,
     .extra      = EXTRA_NONE,
-    .tile       = TILE_ENEMY,
     .behavior   = ENEMYRED_update,
 };

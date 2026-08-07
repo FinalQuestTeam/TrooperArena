@@ -18,6 +18,5 @@ const EnemyDef ENEMYDEF_dummy =
     .timerA     = 0,
     .timerB     = 0,
     .extra      = EXTRA_NONE,
-    .tile       = TILE_DUMMY,
     .behavior   = ENEMYDUMMY_update,
 };

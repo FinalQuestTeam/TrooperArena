@@ -9,5 +9,6 @@ const LevelDef LEVEL14_def =
     .killTarget = 37, .spawnSeconds = 2, .spawnCount = 3,
     .lava = COMBO_LAVA, .lavaCount = LAYOUT_RECTS,
     .mud = COMBO_MUD, .mudCount = LAYOUT_RECTS,
+    .floor = FLOOR_MIX,
     LVL_ROSTER(roster),
 };

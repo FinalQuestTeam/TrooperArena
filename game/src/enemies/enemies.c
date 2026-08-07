@@ -260,6 +260,9 @@ u16 ENEMIES_update(void)
 
         const EnemyDef *def = ENEMY_DEF(e);
 
+        if (e->hitFlash) e->hitFlash--;     // decai o brilho branco do dano
+        if (e->burnFlash) e->burnFlash--;   // decai o pulso vermelho do fogo
+
         // queimadura (fogo): 1 de dano a cada FIRE_TICK_SEC, por FIRE_BURN_SEC
         if (e->burn)
         {
@@ -269,6 +272,7 @@ u16 ENEMIES_update(void)
             {
                 e->burnTick = FIRE_TICK_SEC * fps;
                 if (--e->hp == 0) { enemyDie(e); burnKills++; continue; }
+                e->burnFlash = HIT_FLASH_FRAMES;    // pulso vermelho: tomou dano do fogo
             }
         }
 
@@ -374,6 +378,8 @@ u16 ENEMIES_damageBox(s16 x, s16 y, s16 w, s16 h, u8 status)
 
             if (--e->hp == 0) { enemyDie(e); return ENEMY_HIT_KILLED; }
 
+            e->hitFlash = HIT_FLASH_FRAMES;     // brilho branco: sobreviveu ao dano
+
             // sobreviveu: aplica o status do modo de tiro (gelo/fogo)
             if (status == ENEMY_STATUS_FREEZE)
                 e->frozen = ICE_FREEZE_SEC * fps;
@@ -403,6 +409,7 @@ u16 ENEMIES_chainDamage(s16 cx, s16 cy, u8 maxTargets, u16 range)
         hits++;
         CHAINFX_add(cx, cy, e->x + half, e->y + half);  // arco elétrico até o alvo
         if (--e->hp == 0) { enemyDie(e); kills++; }
+        else e->hitFlash = HIT_FLASH_FRAMES;            // brilho branco se sobreviveu
     }
     return kills;
 }

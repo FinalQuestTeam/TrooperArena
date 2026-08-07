@@ -17,6 +17,5 @@ const EnemyDef ENEMYDEF_pen_yellow =
     .timerA     = 0,
     .timerB     = 0,
     .extra      = EXTRA_SPLIT,    // truque: divide-se em 2 Caçadores
-    .tile       = TILE_PEN_YEL,
     .behavior   = ENEMYYELLOW_update,
 };

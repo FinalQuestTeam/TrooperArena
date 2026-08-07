@@ -4,6 +4,7 @@
 #include <genesis.h>
 #include "elements/elements.h"
 #include "enemies/enemies.h"
+#include "system/video/floor.h"        // FLOOR_STONE / FLOOR_FOREST
 
 #define LEVEL_COUNT     16      // 1..15 campanha + 16 = chefe (Lacraia)
 
@@ -19,6 +20,7 @@ typedef struct
     u8 spawnCount;          // inimigos por aparição (0/1 = simples, 2 = duplas...)
     const u8 *enemyTypes;   // tipos de inimigo que aparecem na fase
     u8 enemyTypeCount;
+    u8 floor;               // chão da arena: FLOOR_STONE (0, padrão) ou FLOOR_FOREST
 } LevelDef;
 
 // uma fase por arquivo em levels/defs/ (level01.c .. level16.c)

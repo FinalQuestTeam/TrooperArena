@@ -4,9 +4,11 @@
 #include <genesis.h>
 #include "elements/elements.h"
 
-// lentidão progressiva: +STEP% a cada segundo pisando, até MAX%
+// lentidão progressiva: BASE% imediato ao entrar, +STEP% a cada segundo, até MAX%
+#define MUD_PLAYER_BASE     30
 #define MUD_PLAYER_STEP     10
 #define MUD_PLAYER_MAX      70
+#define MUD_ENEMY_BASE      3
 #define MUD_ENEMY_STEP      3
 #define MUD_ENEMY_MAX       30
 

@@ -17,6 +17,5 @@ const EnemyDef ENEMYDEF_tri_yellow =
     .timerA     = 0,
     .timerB     = 0,
     .extra      = EXTRA_NONE,
-    .tile       = TILE_TRI_YEL,
     .behavior   = ENEMYYELLOW_update,
 };

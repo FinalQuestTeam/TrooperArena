@@ -66,7 +66,8 @@ void CHARDEMO_run(void)
         for (u8 d = 0; d < 8; d++)
         {
             VDP_setSpriteFull(n, COMPASS[d].x, COMPASS[d].y, SPRITE_SIZE(4, 4),
-                TILE_ATTR_FULL(PAL2, TRUE, FALSE, FALSE, TILE_USER_INDEX + CHARS_DIR_TILE(d)), n + 1);
+                TILE_ATTR_FULL(PAL2, TRUE, CHARS_dirFlipV(d), CHARS_dirFlipH(d),
+                    TILE_USER_INDEX + CHARS_dirTile(d)), n + 1);
             n++;
         }
         VDP_setSpriteLink(n - 1, 0);

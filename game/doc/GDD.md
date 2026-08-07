@@ -106,7 +106,7 @@ O inventário é redesenhado **só quando o estado muda** (`HUD_drawInventoryIfD
 
 ## O jogador
 
-Mech **32×32** (sprite, PAL2, 8 direções — encara a direção do movimento) com **hitbox 16×16**. Movimento em **fixed-point 26.6**.
+Mech **32×32** (sprite, PAL2, 8 direções — encara a direção do movimento) com **hitbox 16×16**. Movimento em **fixed-point 26.6**. Só **3 direções** são geradas na VRAM (N/NE/E); as outras 5 saem por **espelhamento de hardware** (H/V-flip) — ver §6.
 
 | Parâmetro | Constante | Valor |
 |---|---|---|
@@ -142,8 +142,8 @@ A direção de tiro (`faceX/faceY`) segue a última direção pressionada (8 dir
 | Modo | Cargas | Efeito no inimigo atingido |
 |---|---|---|
 | `SHOTMODE_CHAIN` (raio) | 5 acertos | Reação em cadeia: até **3 inimigos** num raio de **80 px**, com arcos elétricos visuais |
-| `SHOTMODE_ICE` (gelo) | 3 tiros | **Congela por 5 s** (parado, sem dano de contato; overlay ciano) |
-| `SHOTMODE_FIRE` (fogo) | 4 tiros | **Queimadura por 6 s**: 1 de dano a cada 2 s (pisca enquanto queima) |
+| `SHOTMODE_ICE` (gelo) | 3 tiros | **Congela por 5 s** (parado, sem dano de contato; overlay ciano contínuo) |
+| `SHOTMODE_FIRE` (fogo) | 4 tiros | **Queimadura por 6 s**: 1 de dano a cada 2 s. A cada tique, o inimigo dá um **pulso vermelho sólido** (feedback) |
 
 ## Tiros inimigos
 
@@ -176,7 +176,7 @@ Fixed-point 26.6, mirados no centro do jogador no instante do disparo (`getAppro
 
 ## A matriz forma × cor
 
-Cada inimigo combina uma **forma** (perfil de resistência) com uma **cor** (comportamento). Todos são insetos-máquina com arte própria (besouro/mosca/aranha) rotacionada em 8 direções — o inimigo **encara o jogador**.
+Cada inimigo combina uma **forma** (perfil de resistência) com uma **cor** (comportamento). Todos são insetos-máquina com arte própria (besouro/mosca/aranha) que **encara o jogador** nas 8 direções — 3 geradas, 5 espelhadas por hardware (§6).
 
 | | **Vermelho** (atira) | **Amarelo** (persegue) | **Roxo** (escudo cíclico) | **Laranja** (investida) |
 |---|---|---|---|---|
@@ -236,10 +236,13 @@ Centopeia vermelha **48×48** (arte própria `INS_BOSS48`, desenhada como 4 spri
 - **Perseguição** (`ENEMIES_chase`): re-mira a cada `RETARGET_FRAMES` = 16 frames; entre re-miras só integra a velocidade (barato). Lentidão da lama aplicada por %.
 - **Separação anti-empilhamento** (`ENEMIES_separate`): a cada 2 quadros (30 Hz), pares muito próximos recebem empurrões opostos — normalização por **tabela de recíprocos** (sem divisão no laço, regra do 68000).
 - **Contato + knockback**: AABB contra a hitbox 16×16 do jogador; aplica o dano (com i-frames) e o inimigo móvel **recua a 2× a velocidade por 1/3 s** (stun). Fixos não recuam.
-- **Congelado**: parado, sem comportamento nem dano de contato, overlay ciano.
-- **Queimando**: 1 de dano a cada 2 s por 6 s; pisca; mortes pela queimadura contam para a meta.
+- **Congelado**: parado, sem comportamento nem dano de contato, **overlay ciano contínuo**.
+- **Queimando**: 1 de dano a cada 2 s por 6 s; a cada tique dá um **pulso vermelho sólido**; mortes pela queimadura contam para a meta.
+- **Feedback de dano**: ao sobreviver a um acerto (tiro/raio), o inimigo **brilha branco** por ~4 frames (`hitFlash`).
 - **Morte** (`enemyDie`): poça de **sangue verde** no chão, sorteio de drop, divisão (Alcateia), flag do chefe.
 - **Raio em cadeia** (`ENEMIES_chainDamage`): a partir do acerto, até 3 alvos em 80 px (blindados são imunes); arcos elétricos visuais.
+
+> **Overlays de status** (gelo/fogo) e os **flashes** (branco de dano, vermelho de fogo) reaproveitam um único tile de xadrez (`TILE_STATUS`); a **cor vem da paleta** (PAL1 ciano, PAL0 branca/vermelha) — zero tiles extras. Detalhes em §6.
 
 ---
 
@@ -276,30 +279,43 @@ Soma dos pesos = 100 (coincidência atual; o sorteio usa a soma real).
 
 ## Estrutura
 
-`LEVEL_COUNT` = **16** (1–15 campanha + 16 = chefe). Cada fase é um `LevelDef` (dados puros) em `levels/defs/levelNN.c`: terreno (`lava`/`mud`, retângulos em tiles), `killTarget`, `spawnSeconds`, `spawnCount` e o **roster** de tipos. A arte dos inimigos do roster é gerada **por fase** na VRAM (ver §6).
+`LEVEL_COUNT` = **16** (1–15 campanha + 16 = chefe). Cada fase é um `LevelDef` (dados puros) em `levels/defs/levelNN.c`: terreno (`lava`/`mud`, retângulos em tiles), `killTarget`, `spawnSeconds`, `spawnCount`, o **roster** de tipos e o **chão** (`floor`). A arte dos inimigos do roster é gerada **por fase** na VRAM (ver §6).
 
 ## Tabela das fases
 
-| Fase | Meta | Spawn (s) | Por onda | Roster | Terreno |
-|---|---|---|---|---|---|
-| 1 | 10 | 5 | 1 | Torreão, Batedor | — |
-| 2 | 12 | 5 | 1 | + Aríete | — |
-| 3 | 14 | 4 | 1 | Batedor, Baluarte, Aríete | Lava |
-| 4 | 16 | 4 | 1 | Torreão, Baluarte, **Caçador** | Lama |
-| 5 | 18 | 4 | 1 | **Fuzileiro**, Caçador, Aríete | — |
-| 6 | 20 | 3 | 1 | Fuzileiro, Caçador, **Adaga** | Lava |
-| 7 | 22 | 3 | **2** | Caçador, **Escudeiro**, Baluarte | Lama |
-| 8 | 24 | 3 | 2 | Fuzileiro, Caçador, Adaga, Aríete | Lava |
-| 9 | 24 | 4 | 1 | **Artilheiro, Alcateia**, Caçador | — |
-| 10 | 26 | 3 | 2 | Alcateia, **Meteoro**, Adaga | Lama |
-| 11 | 28 | 3 | 2 | Artilheiro, **Fortaleza**, Caçador | Lava + lama |
-| 12 | 30 | 3 | 2 | Meteoro, Fuzileiro, Caçador, Baluarte | Lava + lama |
-| 13 | 34 | 2 | 2 | Baluarte, Caçador, Adaga, Artilheiro, Alcateia | Lava |
-| 14 | 37 | 2 | **3** | Fortaleza, Meteoro, Alcateia, Caçador | Lava + lama |
-| 15 | 40 | 2 | 3 | Aríete, Fuzileiro, Caçador, Adaga, Artilheiro, Fortaleza, Meteoro | Lava + lama |
-| **16** | **chefe** | — | — | **Lacraia** (+ Caçadores invocados) | — |
+| Fase | Meta | Spawn (s) | Por onda | Terreno | Chão | Roster |
+|---|---|---|---|---|---|---|
+| 1 | 10 | 5 | 1 | — | pedra | Torreão, Batedor |
+| 2 | 12 | 5 | 1 | — | pedra | + Aríete |
+| 3 | 14 | 4 | 1 | Lava | pedra | Batedor, Baluarte, Aríete |
+| 4 | 16 | 4 | 1 | Lama | floresta | Torreão, Baluarte, **Caçador** |
+| 5 | 18 | 4 | 1 | — | pedra | **Fuzileiro**, Caçador, Aríete |
+| 6 | 20 | 3 | 1 | Lava | pedra | Fuzileiro, Caçador, **Adaga** |
+| 7 | 22 | 3 | **2** | Lama | floresta | Caçador, **Escudeiro**, Baluarte |
+| 8 | 24 | 3 | 2 | Lava | pedra | Fuzileiro, Caçador, Adaga, Aríete |
+| 9 | 24 | 4 | 1 | — | pedra | **Artilheiro, Alcateia**, Caçador |
+| 10 | 26 | 3 | 2 | Lama | floresta | Alcateia, **Meteoro**, Adaga |
+| 11 | 28 | 3 | 2 | Lava+lama | mix | Artilheiro, **Fortaleza**, Caçador |
+| 12 | 30 | 3 | 2 | Lava+lama | mix | Meteoro, Fuzileiro, Caçador, Baluarte |
+| 13 | 34 | 2 | 2 | Lava | pedra | Baluarte, Caçador, Adaga, Artilheiro, Alcateia |
+| 14 | 37 | 2 | **3** | Lava+lama | mix | Fortaleza, Meteoro, Alcateia, Caçador |
+| 15 | 40 | 2 | 3 | Lava+lama | mix | Aríete, Fuzileiro, Caçador, Adaga, Artilheiro, Fortaleza, Meteoro |
+| **16** | **chefe** | — | — | — | caverna | **Lacraia** (+ Caçadores invocados) |
 
 Layouts de terreno (`layouts.c`, retângulos em tiles): `LAVA_PAIR` {5,6,10×6}+{25,15,10×6}, `MUD_PAIR` {6,15,10×6}+{24,5,10×6}; combos (fases com os dois) usam retângulos 8×5 em cantos opostos.
+
+## Chão da arena (`floor.c`, campo `LevelDef.floor`)
+
+Char-map 32×32 ladrilhado no **BG_B** (PAL3), escolhido por fase. Todas as variantes ficam residentes na VRAM (48+32 tiles):
+
+| Variante | Uso | Visual |
+|---|---|---|
+| `FLOOR_STONE` (padrão) | fases sem lama | pedra escura (basketweave) |
+| `FLOOR_FOREST` | fases de lama só | grama, terra, folhas, pedrinhas |
+| `FLOOR_CAVE` | covil do chefe (16 / teste 3) | rocha úmida/arenosa |
+| `FLOOR_MIX` | fases **lava+lama** | **rocha na arena + grama ao redor da lama** |
+
+O **`FLOOR_MIX`** desenha dois chões na mesma fase: como o BG_B só tem uma paleta (PAL3), os dois tilesets **dividem 16 cores** (grama + rocha). A grama é pintada nos tiles a até `FLOOR_MIX_MUD_PAD` = 2 tiles de qualquer retângulo de lama; o resto (inclusive o entorno da lava) fica rocha.
 
 Na preparação/pausa, os inimigos do roster aparecem como **sprites reais** alinhados pela base (`LEVEL_drawInfo` → `ENEMYGFX_drawOnMap`); o chefe (48 px) não é mostrado ali.
 
@@ -307,9 +323,9 @@ Na preparação/pausa, os inimigos do roster aparecem como **sprites reais** ali
 
 3 estágios ligados por **portas** (`levels/test.c`):
 
-1. **Dummies** (HP 20, inofensivos) + fileira com 1 item de cada tipo (reabastecida).
+1. **Dummies** (HP 20, inofensivos) + fileira com 1 item de cada tipo (reabastecida). Tem **lava + lama** (chão `FLOOR_MIX`), para testar dano/lentidão.
 2. **Alvos** frágeis agrupados — demonstra a reação em cadeia do raio. Porta "CHEFE →".
-3. **Arena do chefe** — a Lacraia com o comportamento completo.
+3. **Arena do chefe** — a Lacraia com o comportamento completo (chão de caverna).
 
 ## Elementos de terreno
 
@@ -317,7 +333,7 @@ Na preparação/pausa, os inimigos do roster aparecem como **sprites reais** ali
 Dano **progressivo** enquanto o centro do jogador está em cima: 5/s subindo +5 a cada segundo, teto 25/s (tick de 1 HP com intervalo `fps/dps`). **Ignora i-frames** (é `loseHp`); zera ao sair. Som ambiente de crepitar. Inimigos não são afetados.
 
 ### Lama
-Lentidão progressiva **individual** (cada entidade acumula seu tempo): jogador **+10%/s até 70%**; inimigos **+3%/s até 30%**. Zera ao sair. Som ambiente de passos ("squelch" a cada ~1/3 s).
+Lentidão progressiva **individual** (cada entidade acumula seu tempo): jogador **−30% ao entrar + 10%/s, teto −70%** (chega ao teto em ~4 s); inimigos **−3% ao entrar + 3%/s, teto −30%**. Zera ao sair. Som ambiente de passos ("squelch" a cada ~1/3 s).
 
 ---
 
@@ -344,22 +360,26 @@ Lentidão progressiva **individual** (cada entidade acumula seu tempo): jogador 
 
 ### Arte procedural por char-maps
 
-Não há bitmaps no build (exceto a derivação offline do fundo do título). Toda a arte vem de **char-maps** em `system/video/sprites/*.h`, pintados em tiles 4bpp no boot ou por fase:
+Não há bitmaps no build (exceto a derivação offline do fundo do título). Toda a arte vem de **char-maps** em `system/video/sprites/*.h`, pintados em tiles 4bpp no boot ou por fase. Os tiles base são só os **70** elementos fixos (projéteis, parede, porta, sombra, `TILE_STATUS`, poça de sangue, itens, ícones); os sprites de personagem/inimigo ficam nas regiões rotacionadas.
 
-- `tilegen.c` — tiles fixos: jogador (círculo legado), projéteis, parede, porta, sombra, overlay de gelo (4×4), poça de sangue, e os ícones 8×8 de `icons_data.h` (caveira, bomba, raio, faísca, escudo, gelo, fogo).
-- `chars.c` — mechs 32×32 (9 personagens) rotacionados em **8 direções** (nearest-neighbor, cardeais exatas), na região CHARS da VRAM; o jogador usa PAL2.
-- `enemygfx.c` — insetos rotacionados em 8 direções, **gerados por fase** (não no boot). **Pools por tamanho** com descarte por vida útil: 5 slots de 16 px + 3 de 24 px + 2 de 32 px = **632 tiles** (`ENEMY_ROT_COUNT`); um tipo que não aparece em fases futuras cede o slot. O chefe tem região própria (`BOSS_ROT`, 288 tiles).
-- `floor.c` — chão 32×32 ladrilhado no **BG_B** (PAL3).
+- `tilegen.c` — tiles fixos + os ícones 8×8 de `icons_data.h` (caveira, bomba, raio, faísca, escudo, gelo, fogo).
+- `chars.c` — mech 32×32 (1 dos 9 personagens carregado por vez), **3 direções geradas** (N/NE/E) + 5 por flip = **48 tiles**; PAL2.
+- `enemygfx.c` — insetos, **gerados por fase**, **3 direções** cada + 5 por flip. **Pools por tamanho** com descarte por vida útil: 5 slots de 16 px + 3 de 24 px + 2 de 32 px = **237 tiles** (`ENEMY_ROT_COUNT`). O chefe tem região própria (`BOSS_ROT`, 288 tiles, ainda em 8 direções — quadrantes manuais não flipam).
+- `floor.c` — chão 32×32 no **BG_B** (PAL3), 3 variantes simples + 2 tilesets do mix = **80 tiles**.
 - `titlebg.c` — fundo do título (índice 0 reservado — no MD ele rende a cor de fundo, não a da paleta).
 
-**Orçamento de VRAM**: ~1345 tiles usados no pico de gameplay, de ~1408 disponíveis (os tilemaps começam em 0xB000). Cargas grandes são feitas com o **display desligado** (DMA com display ativo trunca).
+### Espelhamento de hardware (flip H/V)
+
+Mech e inimigos só geram **3 das 8 direções** (N, NE, E); as outras 5 são reflexões, obtidas ligando os bits `HFLIP`/`VFLIP` do sprite (S=vflip(N), W=hflip(E), NW=hflip(NE), SW=hflip+vflip(NE), etc.). Corta o custo de VRAM dessas rotações em **62%**.
+
+**Orçamento de VRAM**: ~**835** tiles usados no pico de gameplay, de **1408** disponíveis (tilemaps em 0xB000) — ~**570 livres**. Chegou aí removendo ~100 tiles de arte legada (quadrados/base antigos) e adotando o flip. Cargas grandes usam **display desligado** (DMA com display ativo trunca).
 
 ### Lista de sprites (`spritelist.c`)
 
 Reconstruída a cada frame, encadeada por link, enviada via `DMA_QUEUE`:
 
-1. **Jogador** (32×32, fixo no link 0 — nunca descartado pelo VDP).
-2. **Inimigos**, com **rotação de flicker**: a varredura começa em um índice diferente por quadro, distribuindo o descarte do VDP (limite de 20 sprites/320 px por linha) entre todos — o piscar em cena cheia fica uniforme. Blindados e queimando piscam de propósito (feedback). Chefe = 4 sprites 24×24; congelados ganham overlay ciano.
+1. **Jogador** (32×32, fixo no link 0 — nunca descartado pelo VDP; usa flip conforme a direção).
+2. **Inimigos**, com **rotação de flicker**: a varredura começa em um índice diferente por quadro, distribuindo o descarte do VDP (limite de 20 sprites/320 px por linha) entre todos — o piscar em cena cheia fica uniforme. Cada inimigo usa o slot da direção + os bits de flip. Blindados piscam de propósito; ao tomar dano brilham branco. Chefe = 4 sprites 24×24. Overlays de status por cima: **ciano contínuo** (gelo) e **pulso vermelho no tique** (fogo).
 3. **Itens**, **projéteis**, **arcos do raio**.
 4. **Sombra do jogador** (prioridade baixa, sob os demais).
 
@@ -372,7 +392,9 @@ Reconstruída a cada frame, encadeada por link, enviada via `DMA_QUEUE`:
 
 | Paleta | Uso |
 |---|---|
-| PAL0 | Texto/HUD |
+| PAL0 | Texto/HUD (letras no índice 15). Índices 1–14 = **paleta de flash**: brancos (dano) exceto o **índice 2 = vermelho** (pulso de fogo). Reaproveitada sem custo de VRAM |
 | PAL1 | Objetos (1 contorno claro, 2 ciano/gelo, 3 vermelho, 4 amarelo, 5 tiro inimigo, 6/7 parede, 8 roxo, 9/10 lama, 11 escuro, 12 laranja, 13 cinza, 14 verde, 15 azul) |
 | PAL2 | Mech do jogador |
-| PAL3 | Chão (alvo do flash) |
+| PAL3 | Chão (varia por fase; alvo do flash da bomba) |
+
+> **Flash sem gastar VRAM**: o corpo do inimigo desenhado com **PAL0** fica todo branco (dano); o `TILE_STATUS` desenhado com PAL0 (índice 2 = vermelho) vira o overlay de fogo; com PAL1 (índice 2 = ciano) vira o gelo. Um tile, três efeitos, pela troca de paleta.

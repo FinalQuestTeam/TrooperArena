@@ -59,6 +59,12 @@ static void showPrep(u8 level)
     state = ST_PREP;
     SFX_silence();
 
+    // some com os sprites da fase anterior ANTES da limpeza e da geração de
+    // arte (LEVEL_loadGfx é pesado): sem o flush, os inimigos congelados
+    // ficariam visíveis sobre a tela preta durante toda a carga
+    SPRITES_hide();
+    SYS_doVBlankProcess();      // aplica a lista vazia já neste quadro
+
     VDP_clearPlane(BG_A, TRUE);
     FLOOR_clear();              // tela de preparação sem o chão
 
@@ -75,12 +81,12 @@ static void showPrep(u8 level)
 static void startPhase(u8 level)
 {
     LEVEL_load(level);
-    FLOOR_draw();               // chão da arena (BG_B)
+    FLOOR_draw(LEVEL_current()->floor);     // chão configurado por fase (def)
     ENEMIES_clear();
     ITEMS_clear();
     SHOTS_clear();
     PLAYER_reset();
-    CHARS_load(PLAYER_CHAR);    // mech do jogador: 8 direções na VRAM + paleta (PAL2)
+    CHARS_load(PLAYER_CHAR);    // mech do jogador: 3 direções na VRAM + paleta (PAL2)
 
     kills = 0;
     gameOver = FALSE;
@@ -104,7 +110,7 @@ static void startTest(u8 stage)
 {
     testStage = stage;
     LEVEL_load(0);              // arena + HUD "FASE TESTE n"
-    FLOOR_draw();               // chão da arena (BG_B)
+    FLOOR_draw(LEVEL_current()->floor);     // chão configurado por fase (def)
     ENEMIES_clear();
     ITEMS_clear();
     SHOTS_clear();
@@ -204,10 +210,12 @@ static void updatePlay(u16 joy, u16 pressed)
 
     if (kills >= LEVEL_current()->killTarget)
     {
-        // fase completa: mensagem por 3 s antes da próxima tela
+        // fase completa: mensagem por 3 s antes da próxima tela; os itens no
+        // chão somem na hora (não dá mais para coletar na cena congelada)
         state = ST_DONE;
         doneTimer = fps * 3;
         SFX_silence();
+        ITEMS_clear();
         VDP_drawText("FASE CONCLUIDA!", 12, 13);
         return;
     }
@@ -363,10 +371,10 @@ void FLOW_run(void)
                     break;
 
                 case ST_DONE:
-                    // cena congelada com a mensagem de conclusão
-                    if (doneTimer) doneTimer--;
+                    // cena congelada com a mensagem de conclusão; no quadro da
+                    // transição NÃO redesenha (showPrep acabou de esconder tudo)
+                    if (doneTimer) { doneTimer--; SPRITES_draw(); }
                     else showPrep((currentLevel % LEVEL_COUNT) + 1);
-                    SPRITES_draw();
                     break;
 
                 case ST_END:

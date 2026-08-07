@@ -18,6 +18,5 @@ const EnemyDef ENEMYDEF_sq_yellow =
     .timerA     = 0,
     .timerB     = 0,
     .extra      = EXTRA_NONE,
-    .tile       = TILE_ENEMY2,
     .behavior   = ENEMYYELLOW_update,
 };

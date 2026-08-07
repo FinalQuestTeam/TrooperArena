@@ -6,8 +6,13 @@ static const u8 roster[] = { ENEMY_SQ_ORG, ENEMY_TRI_RED, ENEMY_TRI_YEL, ENEMY_T
 
 const LevelDef LEVEL15_def =
 {
-    .killTarget = 40, .spawnSeconds = 2, .spawnCount = 3,
-    .lava = COMBO_LAVA, .lavaCount = LAYOUT_RECTS,
-    .mud = COMBO_MUD, .mudCount = LAYOUT_RECTS,
+    .killTarget = 40, 
+    .spawnSeconds = 2, 
+    .spawnCount = 3,
+    .lava = COMBO_LAVA, 
+    .lavaCount = LAYOUT_RECTS,
+    .mud = COMBO_MUD, 
+    .floor = FLOOR_MIX,
+    .mudCount = LAYOUT_RECTS,
     LVL_ROSTER(roster),
 };

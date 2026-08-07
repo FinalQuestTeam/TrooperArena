@@ -34,8 +34,10 @@ void SPRITES_draw(void)
     // virado conforme a direção. Some fora da tela ao piscar (invencibilidade).
     const u8 dir = FACE_DIR[faceY + 1][faceX + 1];
     const s16 pyShown = PLAYER_hidden() ? -64 : (s16) (py - 8);
+    // 3 direções geradas; as outras 5 saem espelhando por hardware (H/V-flip)
     VDP_setSpriteFull(n, (s16) (px - 8), pyShown, SPRITE_SIZE(4, 4),
-        TILE_ATTR_FULL(PAL2, TRUE, FALSE, FALSE, TILE_USER_INDEX + CHARS_DIR_TILE(dir)), n + 1);
+        TILE_ATTR_FULL(PAL2, TRUE, CHARS_dirFlipV(dir), CHARS_dirFlipH(dir),
+            TILE_USER_INDEX + CHARS_dirTile(dir)), n + 1);
     n++;
 
     // rotação de flicker: a cada quadro varre os inimigos a partir de um índice
@@ -56,8 +58,9 @@ void SPRITES_draw(void)
         const s16 half = d->size / 2;
         const u8 edir = ENEMYGFX_faceDir((px + 8) - (enemies[i].x + half),
                                          (py + 8) - (enemies[i].y + half));
-        // queimando: pisca (feedback do dano por tempo)
-        if (enemies[i].burn && ((frame >> 2) & 1)) continue;
+        // tomou dano: desenha o corpo com a paleta de flash (PAL0 branca) por
+        // alguns quadros → o inimigo brilha em branco (feedback do acerto)
+        const u16 epal = enemies[i].hitFlash ? PAL0 : PAL1;
 
         // CHEFE (48x48): 4 quadrantes 24x24 (limite de 32px do hardware)
         if (d->size == 48)
@@ -67,17 +70,34 @@ void SPRITES_draw(void)
             {
                 const s16 qx = (s16) ((q & 1) * 24), qy = (s16) ((q >> 1) * 24);
                 VDP_setSpriteFull(n, enemies[i].x + qx, enemies[i].y + qy, SPRITE_SIZE(3, 3),
-                    TILE_ATTR_FULL(PAL1, TRUE, FALSE, FALSE, base + q * 9), n + 1);
+                    TILE_ATTR_FULL(epal, TRUE, FALSE, FALSE, base + q * 9), n + 1);
                 n++;
             }
-            if (enemies[i].frozen)      // gelo: overlay ciano nos 4 quadrantes
+            // gelo: overlay ciano CONTÍNUO nos 4 quadrantes. fogo: pisca vermelho
+            // SÓLIDO (normal + espelhado) só no tique de dano; fora dele, sem overlay
+            if (enemies[i].frozen)
+            {
                 for (u16 q = 0; q < 4; q++)
                 {
                     const s16 qx = (s16) ((q & 1) * 24), qy = (s16) ((q >> 1) * 24);
                     VDP_setSpriteFull(n, enemies[i].x + qx, enemies[i].y + qy, SPRITE_SIZE(3, 3),
-                        TILE_ATTR_FULL(PAL1, TRUE, FALSE, FALSE, TILE_USER_INDEX + TILE_FROST), n + 1);
+                        TILE_ATTR_FULL(PAL1, TRUE, FALSE, FALSE, TILE_USER_INDEX + TILE_STATUS), n + 1);
                     n++;
                 }
+            }
+            else if (enemies[i].burnFlash)
+            {
+                for (u16 q = 0; q < 4; q++)
+                {
+                    const s16 qx = (s16) ((q & 1) * 24), qy = (s16) ((q >> 1) * 24);
+                    VDP_setSpriteFull(n, enemies[i].x + qx, enemies[i].y + qy, SPRITE_SIZE(3, 3),
+                        TILE_ATTR_FULL(PAL0, TRUE, FALSE, FALSE, TILE_USER_INDEX + TILE_STATUS), n + 1);
+                    n++;
+                    VDP_setSpriteFull(n, enemies[i].x + qx, enemies[i].y + qy, SPRITE_SIZE(3, 3),
+                        TILE_ATTR_FULL(PAL0, TRUE, FALSE, TRUE, TILE_USER_INDEX + TILE_STATUS), n + 1);
+                    n++;
+                }
+            }
             continue;
         }
 
@@ -85,16 +105,32 @@ void SPRITES_draw(void)
                        : (d->size == 24) ? SPRITE_SIZE(3, 3)
                                          : SPRITE_SIZE(2, 2);
 
+        // 3 direções geradas; as outras 5 saem espelhando por hardware (H/V-flip)
+        const u8 fh = ENEMYGFX_dirFlipH(enemies[i].type, edir);
+        const u8 fv = ENEMYGFX_dirFlipV(enemies[i].type, edir);
         VDP_setSpriteFull(n, enemies[i].x, enemies[i].y, size,
-            TILE_ATTR_FULL(PAL1, TRUE, FALSE, FALSE,
+            TILE_ATTR_FULL(epal, TRUE, fv, fh,
                 TILE_USER_INDEX + ENEMYGFX_dirTile(enemies[i].type, edir)), n + 1);
         n++;
 
-        // congelado: overlay xadrez ciano por cima (tom azulado)
+        // overlay de status (mesmo tile TILE_STATUS, a paleta define a cor):
+        //  - GELO: xadrez ciano CONTÍNUO enquanto congelado.
+        //  - FOGO: só PISCA vermelho no tique de dano (a cada ~2 s). O pulso usa
+        //    duas cópias (normal + espelhada) que preenchem o xadrez → vermelho
+        //    SÓLIDO; fora do tique o inimigo fica sem overlay.
         if (enemies[i].frozen)
         {
             VDP_setSpriteFull(n, enemies[i].x, enemies[i].y, size,
-                TILE_ATTR_FULL(PAL1, TRUE, FALSE, FALSE, TILE_USER_INDEX + TILE_FROST), n + 1);
+                TILE_ATTR_FULL(PAL1, TRUE, FALSE, FALSE, TILE_USER_INDEX + TILE_STATUS), n + 1);
+            n++;
+        }
+        else if (enemies[i].burnFlash)
+        {
+            VDP_setSpriteFull(n, enemies[i].x, enemies[i].y, size,
+                TILE_ATTR_FULL(PAL0, TRUE, FALSE, FALSE, TILE_USER_INDEX + TILE_STATUS), n + 1);
+            n++;
+            VDP_setSpriteFull(n, enemies[i].x, enemies[i].y, size,
+                TILE_ATTR_FULL(PAL0, TRUE, FALSE, TRUE, TILE_USER_INDEX + TILE_STATUS), n + 1);
             n++;
         }
     }

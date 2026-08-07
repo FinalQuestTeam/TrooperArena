@@ -1,7 +1,12 @@
-// Gera os tiles dos inimigos (insetos) nas 8 direções, a partir dos char-maps
-// (insects_data.h). Rotação por vizinho-mais-próximo (cardeais exatas a 90°,
-// diagonais a 45°) — mesma técnica do mech do jogador. A cor do corpo vem da
-// família (PAL1). Roda uma vez no boot; cada tipo ocupa 8 × (size/8)² tiles.
+// Gera os tiles dos inimigos (insetos), a partir dos char-maps (insects_data.h).
+// Rotação por vizinho-mais-próximo. A cor do corpo vem da família (PAL1).
+//
+// Só 3 direções são GERADAS na VRAM — N (0), NE (1) e E (2). As outras 5 saem por
+// ESPELHAMENTO de hardware do sprite (bits H/V-flip), pois são reflexões dessas:
+//   S=vflip(N)  SE=vflip(NE)  W=hflip(E)  NW=hflip(NE)  SW=hflip+vflip(NE)
+// Isso corta o custo em VRAM de 8 → 3 direções (−62%). O CHEFE é a exceção: como
+// é desenhado em 4 quadrantes manuais, mantém as 8 direções (flipar exigiria
+// trocar as posições dos quadrantes).
 
 #include "system/video/enemygfx.h"
 #include "system/video/sprites/tiles.h"
@@ -12,12 +17,23 @@
 static const s16 COS8[8] = { 256, 181,   0, -181, -256, -181,    0,  181 };
 static const s16 SIN8[8] = {   0, 181, 256,  181,    0, -181, -256, -181 };
 
+// Cada direção 0..7 → qual das 3 geradas usar (N=0/NE=1/E=2) + flips de hardware.
+//   dir:      N   NE  E   SE  S   SW  W   NW
+#define GEN_DIRS 3
+static const u8 DIR_SLOT [8] = { 0,  1,  2,  1,  0,  1,  2,  1 };
+static const u8 DIR_HFLIP[8] = { 0,  0,  0,  0,  0,  1,  1,  1 };
+static const u8 DIR_VFLIP[8] = { 0,  0,  0,  1,  1,  1,  0,  0 };
+
 // Pools de slots por TAMANHO (16/24/32px). Slots uniformes dentro do pool evitam
 // fragmentação. Cada tipo é gerado 1× e reaproveitado; quando um tipo não aparece
 // mais em nenhuma fase futura (morto), seu slot pode ser tomado por outro. As
-// contagens vêm do pico de tipos vivos simultâneos ao longo das 15 fases:
-//   pequenos(32t): 5   médios(72t): 3   grandes(128t): 2
-//   → 5×32 + 3×72 + 2×128 = 632 tiles = ENEMY_ROT_COUNT
+// contagens vêm do pico de tipos vivos simultâneos ao longo das 15 fases (só 3
+// direções por tipo — ver topo do arquivo):
+//   pequenos(12t): 5   médios(27t): 3   grandes(48t): 2
+//   → 5×12 + 3×27 + 2×48 = 237 tiles = ENEMY_ROT_COUNT
+#define SLOT_TILES_S    (GEN_DIRS * 4)      // 16px: 3 dir × 4 tiles = 12
+#define SLOT_TILES_M    (GEN_DIRS * 9)      // 24px: 3 × 9 = 27
+#define SLOT_TILES_L    (GEN_DIRS * 16)     // 32px: 3 × 16 = 48
 #define SLOTS_S 5
 #define SLOTS_M 3
 #define SLOTS_L 2
@@ -112,9 +128,9 @@ static void paintRot(u32 *buf, u16 baseTile, const char *const *art,
 static void initPools(void)
 {
     u16 base = ENEMY_ROT_BASE;
-    for (u8 i = 0; i < SLOTS_S; i++) { slotsS[i].occ = NO_OCC; slotsS[i].base = base; base += 32;  }
-    for (u8 i = 0; i < SLOTS_M; i++) { slotsM[i].occ = NO_OCC; slotsM[i].base = base; base += 72;  }
-    for (u8 i = 0; i < SLOTS_L; i++) { slotsL[i].occ = NO_OCC; slotsL[i].base = base; base += 128; }
+    for (u8 i = 0; i < SLOTS_S; i++) { slotsS[i].occ = NO_OCC; slotsS[i].base = base; base += SLOT_TILES_S; }
+    for (u8 i = 0; i < SLOTS_M; i++) { slotsM[i].occ = NO_OCC; slotsM[i].base = base; base += SLOT_TILES_M; }
+    for (u8 i = 0; i < SLOTS_L; i++) { slotsL[i].occ = NO_OCC; slotsL[i].base = base; base += SLOT_TILES_L; }
     poolsReady = TRUE;
 }
 
@@ -138,20 +154,22 @@ static Slot *pickSlot(Slot *pool, u8 n, u8 phase, const u8 *last)
     return worst;
 }
 
-// gera as 8 rotações de UM tipo no seu slot atual (enemyBase[t])
+// gera as rotações de UM tipo no seu slot atual (enemyBase[t]): 3 direções
+// (N/NE/E) para os inimigos comuns; 8 para o CHEFE (quadrantes, sem flip)
 static void genType(u8 t)
 {
     const EnemyDef *d = ENEMY_DEFS[t];
     const u16 size = d->size;
     const u16 tpd  = (size / 8) * (size / 8);   // tiles por direção
-    const u16 count = 8 * tpd;
+    const u8  ndir = (t == ENEMY_BOSS) ? 8 : GEN_DIRS;
+    const u16 count = ndir * tpd;
 
     const char *const *art = (t == ENEMY_BOSS) ? INS_BOSS48 : pickArt(d->shape, size);
     const u16 body = bodyColor(d->color);
 
     u32 *buf = MEM_alloc(count * 8 * (u16) sizeof(u32));
     memset(buf, 0, count * 8 * (u16) sizeof(u32));
-    for (u8 dir = 0; dir < 8; dir++)
+    for (u8 dir = 0; dir < ndir; dir++)
         paintRot(buf, dir * tpd, art, size, body, dir);
     VDP_loadTileData(buf, TILE_USER_INDEX + enemyBase[t], count, DMA);
     MEM_free(buf);
@@ -198,8 +216,14 @@ u16 ENEMYGFX_dirTile(u8 type, u8 dir)
 {
     const u16 size = ENEMY_DEFS[type]->size;
     const u16 tpd = (size / 8) * (size / 8);
-    return enemyBase[type] + dir * tpd;
+    // chefe: 8 direções diretas; demais: 3 geradas (as outras 5 via flip)
+    const u8 slot = (type == ENEMY_BOSS) ? dir : DIR_SLOT[dir];
+    return enemyBase[type] + slot * tpd;
 }
+
+// bits de espelhamento da direção (0 no chefe, que tem as 8 direções geradas)
+u8 ENEMYGFX_dirFlipH(u8 type, u8 dir) { return (type == ENEMY_BOSS) ? 0 : DIR_HFLIP[dir]; }
+u8 ENEMYGFX_dirFlipV(u8 type, u8 dir) { return (type == ENEMY_BOSS) ? 0 : DIR_VFLIP[dir]; }
 
 void ENEMYGFX_drawOnMap(u8 type, u16 col, u16 row)
 {

@@ -19,6 +19,5 @@ const EnemyDef ENEMYDEF_sq_purple =
     .timerA     = 25,                   // 2,5 s sem escudo (vulnerável)
     .timerB     = 20,                   // 2,0 s com escudo (invulnerável)
     .extra      = EXTRA_NONE,
-    .tile       = TILE_ENEMY3,
     .behavior   = ENEMYPURPLE_update,
 };

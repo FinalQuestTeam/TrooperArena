@@ -21,6 +21,5 @@ const EnemyDef ENEMYDEF_boss =
     .timerA     = 0,
     .timerB     = 0,
     .extra      = EXTRA_NONE,
-    .tile       = TILE_PEN_PUR,      // legado (o desenho usa as rotações do enemygfx)
     .behavior   = ENEMYBOSS_update,
 };

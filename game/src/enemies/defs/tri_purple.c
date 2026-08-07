@@ -17,6 +17,5 @@ const EnemyDef ENEMYDEF_tri_purple =
     .timerA     = 12,             // 1,2 s vulnerável
     .timerB     = 8,              // 0,8 s com escudo (curto)
     .extra      = EXTRA_NONE,
-    .tile       = TILE_TRI_PUR,
     .behavior   = ENEMYPURPLE_update,
 };

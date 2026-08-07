@@ -17,6 +17,5 @@ const EnemyDef ENEMYDEF_tri_orange =
     .timerA     = 8,               // cooldown curto (0,8 s) — investe muito
     .timerB     = 0,
     .extra      = EXTRA_NONE,
-    .tile       = TILE_TRI_ORG,
     .behavior   = ENEMYORANGE_update,
 };

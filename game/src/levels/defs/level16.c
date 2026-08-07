@@ -10,5 +10,6 @@ static const u8 roster[] = { ENEMY_BOSS, ENEMY_TRI_YEL };
 const LevelDef LEVEL16_def =
 {
     .killTarget = 1, .spawnSeconds = 99, .spawnCount = 0,
+    .floor = FLOOR_CAVE,        // covil do chefe: rocha úmida
     LVL_ROSTER(roster),
 };

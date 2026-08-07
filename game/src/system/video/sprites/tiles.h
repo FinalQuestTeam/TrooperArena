@@ -6,57 +6,57 @@
 // pelos módulos que desenham (sprites, HUD, elementos, itens, inimigos).
 // Mantido separado de core/game.h por ser um concern de vídeo/gráficos.
 
-#define TILE_PLAYER     0   // 4 tiles (16x16, ordem coluna)
-#define TILE_ENEMY      4   // 4 tiles (vermelho: atirador)
-#define TILE_ENEMY2     8   // 4 tiles (amarelo: perseguidor)
-#define TILE_PSHOT      12  // 1 tile (8x8)
-#define TILE_ESHOT      13  // 1 tile
-#define TILE_WALL       14  // 1 tile
-#define TILE_ENEMY3     15  // 16 tiles (32x32, roxo: tanque perseguidor)
-#define TILE_LAVA       31  // 1 tile
-#define TILE_MUD        32  // 1 tile
-#define TILE_HEART      33  // 4 tiles (16x16, item de vida)
-#define TILE_BOMB       37  // 4 tiles (16x16, item de carga de bomba)
-#define TILE_SKULL      41  // 1 tile (8x8, caveira do contador de mortes)
-#define TILE_BOMB_ICON  42  // 1 tile (8x8, bomba do HUD)
-#define TILE_ICON_RED   43  // 1 tile (8x8, ícone da cor vermelha)
-#define TILE_ICON_YEL   44  // 1 tile (8x8, ícone da cor amarela)
-#define TILE_ICON_PUR   45  // 1 tile (8x8, ícone da cor roxa)
-// tiles dos inimigos — gerados proceduralmente por forma+cor (tilegen.c)
-#define TILE_SQ_ORG     46  // 4 tiles (16x16, quadrado laranja)
-#define TILE_TRI_RED    50  // 4 tiles (16x16)
-#define TILE_TRI_YEL    54  // 4
-#define TILE_TRI_PUR    58  // 4
-#define TILE_TRI_ORG    62  // 4
-#define TILE_PEN_RED    66  // 9 tiles (24x24)
-#define TILE_PEN_YEL    75  // 9
-#define TILE_PEN_PUR    84  // 16 tiles (32x32)
-#define TILE_PEN_ORG    100 // 9
-#define TILE_ICON_ORG   109 // 1 tile (8x8, ícone da cor laranja)
-#define TILE_BULLET     110 // 4 tiles (16x16, item de disparos)
-#define TILE_DUMMY      114 // 9 tiles (24x24, inimigo dummy de teste)
-#define TILE_BOOT       123 // 4 tiles (16x16, item de velocidade)
-#define TILE_SHIELD     127 // 4 tiles (16x16, item de invencibilidade)
-#define TILE_CHAIN      131 // 4 tiles (16x16, item raio)
-#define TILE_BOLT       135 // 1 tile (8x8, indicador de raio ativo no HUD)
-#define TILE_DOOR       136 // 1 tile (8x8, painel da porta entre as fases teste)
-#define TILE_SPARK      137 // 1 tile (8x8, nó do raio em cadeia)
-#define TILE_SHADOW     138 // 4 tiles (16x16, sombra pequena sob o jogador)
-#define TILE_ICE        142 // 4 tiles (16x16, item de gelo)
-#define TILE_FIRE       146 // 4 tiles (16x16, item de fogo)
-#define TILE_FROST      150 // 16 tiles (bloco 4x4 idêntico: overlay ciano de "congelado")
-#define TILE_ICON_SHIELD 166 // 1 tile (8x8, ícone do escudo no inventário)
-#define TILE_ICON_ICE   167 // 1 tile (8x8, ícone do gelo no inventário)
-#define TILE_ICON_FIRE  168 // 1 tile (8x8, ícone do fogo no inventário)
-#define TILE_BLOOD      169 // 1 tile (8x8, quarto de poça; espelhado = poça 16x16)
-#define NUM_TILES       170
+// Os sprites dos inimigos (insetos) e do jogador (mech) NÃO ficam aqui: são
+// gerados por direção nas regiões ENEMY_ROT / BOSS_ROT / CHARS (abaixo). Estes
+// tiles base são só os elementos fixos (projéteis, cenário, itens, HUD, overlays).
+
+// projéteis e cenário (8x8, 1 tile cada)
+#define TILE_PSHOT      0   // tiro do jogador
+#define TILE_ESHOT      1   // tiro inimigo
+#define TILE_WALL       2   // parede (borda da arena)
+#define TILE_LAVA       3   // lava
+#define TILE_MUD        4   // lama
+
+// itens (16x16 = 4 tiles em ordem de coluna)
+#define TILE_HEART      5   // vida
+#define TILE_BOMB       9   // carga de bomba
+#define TILE_BULLET     13  // disparos (bala)
+#define TILE_BOOT       17  // velocidade (botinha)
+#define TILE_SHIELD     21  // invencibilidade (escudo)
+#define TILE_CHAIN      25  // raio (reação em cadeia)
+#define TILE_ICE        29  // gelo
+#define TILE_FIRE       33  // fogo
+
+// sombra do jogador (16x16)
+#define TILE_SHADOW     37  // 4 tiles
+
+// ícones 8x8 (1 tile cada): HUD, telas e cores dos inimigos
+#define TILE_SKULL      41  // caveira do contador de mortes
+#define TILE_BOMB_ICON  42  // bomba (HUD/inventário)
+#define TILE_BOLT       43  // raio ativo (HUD/inventário)
+#define TILE_SPARK      44  // nó do raio em cadeia
+#define TILE_DOOR       45  // porta entre as fases teste
+#define TILE_ICON_RED   46  // cor vermelha (tela "Como Jogar")
+#define TILE_ICON_YEL   47  // cor amarela
+#define TILE_ICON_PUR   48  // cor roxa
+#define TILE_ICON_ORG   49  // cor laranja
+#define TILE_ICON_SHIELD 50 // escudo (inventário)
+#define TILE_ICON_ICE   51  // gelo (inventário)
+#define TILE_ICON_FIRE  52  // fogo (inventário)
+#define TILE_BLOOD      53  // quarto de poça de sangue (espelhado = poça 16x16)
+
+// overlay de status (bloco 4x4 xadrez, índice 2) sobre o inimigo:
+// gelo (ciano, PAL1) / fogo (vermelho, PAL0)
+#define TILE_STATUS     54  // 16 tiles
+#define NUM_TILES       70
 
 // Região das rotações dos inimigos: cada tipo tem 8 direções (como o mech),
 // geradas no boot por system/video/enemygfx.c, logo após os tiles base.
 #define ENEMY_ROT_BASE  NUM_TILES
-#define ENEMY_ROT_COUNT 632 // pools de slots por tamanho (5×32 + 3×72 + 2×128):
-                            // cada tipo gerado 1×, reaproveitado, e o slot de um
-                            // tipo "morto" é reciclado (enemygfx.c). Boot instantâneo.
+#define ENEMY_ROT_COUNT 237 // pools de slots por tamanho (5×12 + 3×27 + 2×48). Só 3
+                            // direções (N/NE/E) são geradas; as outras 5 saem por
+                            // flip H/V de hardware (enemygfx.c). Cada tipo gerado 1×,
+                            // reaproveitado; slot de tipo "morto" é reciclado.
 
 // região dedicada do CHEFE (48x48): 8 direções × (48/8)² = 8 × 36 = 288 tiles.
 // Grande demais para os pools; fica logo após a região dos inimigos.

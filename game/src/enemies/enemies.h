@@ -53,6 +53,10 @@
 #define ENEMY_SPEED_FP  40      // ~0,63 px/frame em 26.6 (base)
 #define RETARGET_FRAMES 16      // recalcula a direção a cada N frames
 
+// brilho branco ao tomar dano (feedback visual): frames que o inimigo é desenhado
+// com a paleta de flash (PAL0 branca) logo após um acerto que não o mata
+#define HIT_FLASH_FRAMES 4
+
 // separação anti-empilhamento (steering "separation"): inimigos muito próximos
 // se afastam devagar, permitindo sobreposição parcial mas nunca total.
 // A distância mínima entre centros = (ha+hb) * SEP_MIN_NUM / (1<<SEP_MIN_SHIFT).
@@ -90,6 +94,8 @@ typedef struct
     u16 frozen;             // gelo: frames parado/azulado restantes (0 = normal)
     u16 burn;               // fogo: frames de queimadura restantes (0 = sem queimar)
     u16 burnTick;           // frames até o próximo dano da queimadura
+    u16 hitFlash;           // frames restantes do brilho branco ao tomar dano
+    u16 burnFlash;          // frames restantes do pulso vermelho a cada dano do fogo
     bool shielded;          // roxo: invulnerável enquanto o escudo está erguido
     bool active;
 } Enemy;
@@ -109,7 +115,6 @@ typedef struct EnemyDef
     u16 speedFp;        // velocidade de perseguição/dash (26.6); 0 = fixo
     u16 timerA, timerB; // cadências (0,1 s): tiro / escudo-off / dash-cooldown etc.
     u8  extra;          // EXTRA_* (truque do pentágono)
-    u16 tile;           // índice base do tile na VRAM (a partir de TILE_USER_INDEX)
     void (*behavior)(Enemy *e, const struct EnemyDef *def);
 } EnemyDef;
 

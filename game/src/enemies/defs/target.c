@@ -20,6 +20,5 @@ const EnemyDef ENEMYDEF_target =
     .timerA     = 0,
     .timerB     = 0,
     .extra      = EXTRA_NONE,
-    .tile       = TILE_DUMMY,   // mesma arte do dummy (quadrado cinza)
     .behavior   = ENEMYDUMMY_update,
 };

@@ -35,19 +35,8 @@ static void buildTiles(void)
     tileBuf = MEM_alloc(TILEBUF_BYTES);
     memset(tileBuf, 0, TILEBUF_BYTES);
 
-    for (u16 y = 0; y < 16; y++)
-    {
-        for (u16 x = 0; x < 16; x++)
-        {
-            // círculo do jogador: raio 7,5 (coordenadas dobradas)
-            s16 dx = (s16) (2 * x) - 15;
-            s16 dy = (s16) (2 * y) - 15;
-            s16 d2 = dx * dx + dy * dy;
-            if (d2 <= 225) setPix(TILE_PLAYER, x, y, (d2 >= 160) ? 1 : 2, 2);
-        }
-    }
-
-    // os tiles dos inimigos (insetos, 8 direções) são gerados em enemygfx.c
+    // o jogador (mech) e os inimigos (insetos) são gerados por direção em
+    // chars.c / enemygfx.c (regiões CHARS / ENEMY_ROT), não aqui.
 
     // projéteis 8x8 (tile único)
     for (u16 y = 0; y < 8; y++)
@@ -133,13 +122,14 @@ static void buildTiles(void)
         }
     }
 
-    // overlay "congelado": 16 tiles idênticos (bloco 4x4) em xadrez ciano (índice
-    // 2); desenhado por cima do inimigo congelado (spritelist.c) → tom azulado
+    // overlay de status: 16 tiles idênticos (bloco 4x4) em xadrez no índice 2,
+    // desenhado por cima do inimigo (spritelist.c). A paleta define a cor:
+    // PAL1 → ciano (gelo/congelado), PAL0 → vermelho (fogo/queimando).
     for (u16 t = 0; t < 16; t++)
         for (u16 yy = 0; yy < 8; yy++)
             for (u16 xx = 0; xx < 8; xx++)
                 if (((xx + yy) & 1) == 0)
-                    tileBuf[(TILE_FROST + t) * 8 + yy] |= (u32) 2 << ((7 - xx) * 4);
+                    tileBuf[(TILE_STATUS + t) * 8 + yy] |= (u32) 2 << ((7 - xx) * 4);
 
     // ícones do inventário no HUD (escudo, gelo, fogo). Bomba e raio já têm
     // ícone (TILE_BOMB_ICON / TILE_BOLT).
@@ -178,6 +168,18 @@ static void buildTiles(void)
 // paleta dos objetos (PAL1); pública porque a arte do título toma a PAL1 emprestada
 void TILEGEN_palette(void)
 {
+    // PAL0 é o texto (letras no índice 15). Os índices 1..14 ficam livres, então
+    // são pintados de BRANCO: viram a "paleta de flash" — um inimigo que toma dano
+    // é desenhado com PAL0 e aparece todo branco por alguns quadros, sem gastar
+    // nenhum tile de VRAM (a VRAM está no limite por causa da arte do título).
+    for (u16 i = 1; i <= 15; i++) PAL_setColor(i, RGB24_TO_VDPCOLOR(0xF0F0F0));
+
+    // exceção: PAL0 índice 2 = VERMELHO. Os tiles do overlay (TILE_STATUS, xadrez
+    // no índice 2) desenhados com PAL0 saem vermelhos → overlay de "queimando",
+    // igual ao ciano do gelo mas em vermelho. O corpo dos inimigos não usa o
+    // índice 2, então o flash branco de dano não é afetado.
+    PAL_setColor(2, RGB24_TO_VDPCOLOR(0xE02020));
+
     PAL_setColor(17, RGB24_TO_VDPCOLOR(0xF0F0F0));  // 1: contorno claro
     PAL_setColor(18, RGB24_TO_VDPCOLOR(0x20C0E0));  // 2: jogador (ciano)
     PAL_setColor(19, RGB24_TO_VDPCOLOR(0xD02020));  // 3: inimigo vermelho

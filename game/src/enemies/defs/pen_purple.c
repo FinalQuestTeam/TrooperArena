@@ -17,6 +17,5 @@ const EnemyDef ENEMYDEF_pen_purple =
     .timerA     = 20,            // 2,0 s vulnerável
     .timerB     = 25,            // 2,5 s com escudo (longo)
     .extra      = EXTRA_SUMMON,  // truque: invoca lacaios
-    .tile       = TILE_PEN_PUR,
     .behavior   = ENEMYPURPLE_update,
 };

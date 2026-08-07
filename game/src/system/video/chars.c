@@ -1,6 +1,7 @@
-// Gera os tiles dos personagens (mechs 32x32) a partir dos char-maps, nas 8
-// direções. As cardeais (0/2/4/6) são rotações exatas de 90°; as diagonais
-// (1/3/5/7) são rotação de 45° por vizinho-mais-próximo. Sem divisão no laço.
+// Gera os tiles do mech (32x32) a partir dos char-maps. Só 3 direções são
+// geradas — N (0), NE (1), E (2) — por rotação (cardeais a 90°, diagonais a 45°).
+// As outras 5 saem por espelhamento de hardware do sprite (H/V-flip), pois são
+// reflexões dessas — mesma técnica dos inimigos (enemygfx.c). Sem divisão no laço.
 
 #include "system/video/chars.h"
 #include "system/video/sprites/chars_data.h"
@@ -8,6 +9,16 @@
 // seno/cosseno × 256 para dir*45° (0 = cima, sentido horário)
 static const s16 COS8[8] = { 256, 181,   0, -181, -256, -181,    0,  181 };
 static const s16 SIN8[8] = {   0, 181, 256,  181,    0, -181, -256, -181 };
+
+// direção 0..7 → slot gerado (N=0/NE=1/E=2) + flips (idem enemygfx.c)
+//   dir:      N   NE  E   SE  S   SW  W   NW
+static const u8 DIR_SLOT [8] = { 0,  1,  2,  1,  0,  1,  2,  1 };
+static const u8 DIR_HFLIP[8] = { 0,  0,  0,  0,  0,  1,  1,  1 };
+static const u8 DIR_VFLIP[8] = { 0,  0,  0,  1,  1,  1,  0,  0 };
+
+u16 CHARS_dirTile(u8 dir)  { return CHARS_TILE_BASE + DIR_SLOT[dir] * CHARS_DIR_TILES; }
+u8  CHARS_dirFlipH(u8 dir) { return DIR_HFLIP[dir]; }
+u8  CHARS_dirFlipV(u8 dir) { return DIR_VFLIP[dir]; }
 
 // pinta o char-map 32x32 rotacionado por `dir` em 16 tiles (ordem coluna),
 // a partir de baseTile. Cada caractere hex do mapa é um índice de cor (0 = vazio).
@@ -38,11 +49,11 @@ static void paint32(u32 *buf, u16 baseTile, const char *const art[32], u8 dir)
 
 void CHARS_load(u8 which)
 {
-    const u16 count = 8 * CHARS_DIR_TILES;      // 128 tiles (8 direções × 16)
+    const u16 count = CHARS_TILES;              // 48 tiles (3 direções × 16)
     u32 *buf = MEM_alloc(count * 8 * (u16) sizeof(u32));
     memset(buf, 0, count * 8 * (u16) sizeof(u32));
 
-    for (u8 d = 0; d < 8; d++)
+    for (u8 d = 0; d < CHARS_GEN_DIRS; d++)     // gera N/NE/E; o resto é flip
         paint32(buf, d * CHARS_DIR_TILES, CHARS_ART[which], d);
 
     VDP_loadTileData(buf, TILE_USER_INDEX + CHARS_TILE_BASE, count, DMA);
