@@ -113,10 +113,12 @@ Ambiente completo para desenvolver jogos de Mega Drive em C com o SGDK no macOS.
 ```
 MegaDrive/
 ├── game/                   # O jogo (RedRex) — ver acima
+│   └── doc/                # Documentação
+│       ├── GDD.md          # Game Design Document
+│       ├── plano-inimigos.md
+│       ├── sgdk-guia.html  # Guia completo da API SGDK em português (abra no navegador)
+│       └── fragmentos/     # Fragmentos HTML por módulo (fonte do guia)
 ├── SGDK/                   # Clone oficial do SGDK (lib compilada em lib/libmd.a)
-├── docs/
-│   ├── sgdk-guia.html      # Guia completo da API em português (abra no navegador)
-│   └── fragmentos/         # Fragmentos HTML por módulo (fonte do guia)
 └── README.md
 ```
 
@@ -153,7 +155,7 @@ Se atualizar as tools nativas: `cmake -S . -B build -DCMAKE_SYSTEM_NAME=Generic 
 
 ## Documentação do SGDK
 
-- **Guia completo em português**: `docs/sgdk-guia.html` — referência função por função de todos os headers, introdução, build e rescomp. Também publicado em: https://claude.ai/code/artifact/669a50c5-a0ce-4c2f-9e12-d300db1b4971
+- **Guia completo em português**: `game/doc/sgdk-guia.html` — referência função por função de todos os headers, introdução, build e rescomp. Também publicado em: https://claude.ai/code/artifact/669a50c5-a0ce-4c2f-9e12-d300db1b4971
 - Doxygen oficial: http://stephane-d.github.io/SGDK/
 - Wiki oficial: https://github.com/Stephane-D/SGDK/wiki
 - Recursos: leia `SGDK/bin/rescomp.txt` para declarar sprites, imagens, música (.res)
